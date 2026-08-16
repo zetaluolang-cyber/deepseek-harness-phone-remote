@@ -11,7 +11,9 @@
 import { ensurePairingCode, rotatePairingCode, verifyDevice, deviceHasCapability } from './security.js'
 import { createDispatcher } from './dispatch.js'
 import { createCockpitService } from './cockpit/service.js'
+import { createPresenceService } from './presence/service.js'
 import { POCKET_OPS, CAPABILITIES } from './cockpit/contract.js'
+import { PRESENCE_OPS } from './presence/contract.js'
 import { access, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -122,6 +124,7 @@ export default {
     // a legacy device (no capabilities field) gets the default set which
     // includes cockpit. Fail closed: no device -> no cockpit.
     const cockpit = createCockpitService(ctx)
+    const presence = createPresenceService(ctx)
     const pocketErr = (code, message) => ({ ok: false, error: { code, message, details: {} } })
 
     const pocketHandler = async (endpoint, payload) => {
@@ -142,6 +145,8 @@ export default {
         case POCKET_OPS.AWAY_START: return cockpit.awayStart()
         case POCKET_OPS.AWAY_STOP: return cockpit.awayStop()
         case POCKET_OPS.CHECK: return cockpit.check()
+        case PRESENCE_OPS.STATUS: return presence.status(authRes.device)
+        case PRESENCE_OPS.TASKS: return presence.tasks()
         default: return pocketErr('bad-request', 'unknown /pocket endpoint: ' + String(endpoint))
       }
     }
