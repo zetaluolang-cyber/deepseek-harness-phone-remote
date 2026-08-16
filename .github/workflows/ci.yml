@@ -1,4 +1,4 @@
-﻿# CI: lint (syntax), unit/security tests, deploy/ownership tests, packaging.
+# CI: lint (syntax), unit/security tests, deploy/ownership tests, packaging.
 # Kept deliberately light ??no heavyweight framework, just node:test + node --check.
 name: CI
 
@@ -25,7 +25,7 @@ jobs:
           cd remfs-persistent
           OUT=$(node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/cockpit.test.js test/presence.test.js 2>&1)
           echo "$OUT"
-          COUNT=$(echo "$OUT" | grep -oP '[#?鉛 tests \K\d+' | head -1)
+          COUNT=$(echo "$OUT" | grep -oP '[#ℹ] tests \K\d+' | head -1)
           echo "tests executed: ${COUNT:-0}"
           if [ -z "$COUNT" ] || [ "$COUNT" -lt 20 ]; then
             echo "::error::zero/suspicious test count (expected >= 20, got ${COUNT:-0}) - CI must never pass with no tests"
@@ -69,7 +69,7 @@ jobs:
           cd remfs-persistent
           $OUT = node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/cockpit.test.js test/presence.test.js 2>&1 | Out-String
           Write-Host $OUT
-          $m = [regex]::Match($OUT, '[#?鉛 tests (\d+)')
+          $m = [regex]::Match($OUT, '[#ℹ] tests (\d+)')
           $count = if ($m.Success) { [int]$m.Groups[1].Value } else { 0 }
           Write-Host "tests executed: $count"
           if ($count -lt 20) { Write-Error "zero/suspicious test count (expected >= 20, got $count)"; exit 1 }
