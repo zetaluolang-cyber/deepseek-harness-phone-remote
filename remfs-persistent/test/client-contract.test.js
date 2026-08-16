@@ -74,6 +74,37 @@ test('client source: upstream CSS-module selectors are isolated in one adapter',
   }
 })
 
+// Pocket Cockpit (v0.3 Phase 1): host must register the /pocket namespace
+// (separate from /remfs), gate every operation on device auth + the cockpit
+// capability, and the client must open an EXISTING session (handoff) via
+// ctx.sessions.open(id) - never create a replacement.
+test('host source: registers /pocket with device-auth + cockpit capability gate', () => {
+  assert.match(HOST_SRC, /rpc\.handle\('\/pocket'/, 'host must register the /pocket channel')
+  assert.match(HOST_SRC, /verifyDevice\(/, 'host must authenticate /pocket calls with the device credential')
+  assert.match(HOST_SRC, /deviceHasCapability|capability-denied/,
+    'host must gate /pocket on the cockpit device capability')
+})
+
+test('host source: /pocket implements cockpit.status/sessions and away start/stop (no approval yet)', () => {
+  // host must wire the shared POCKET_OPS constants for every Phase-1 op
+  assert.match(HOST_SRC, /POCKET_OPS\.STATUS/, 'host must implement cockpit.status')
+  assert.match(HOST_SRC, /POCKET_OPS\.SESSIONS/, 'host must implement cockpit.sessions')
+  assert.match(HOST_SRC, /POCKET_OPS\.AWAY_START/, 'host must implement cockpit.away.start')
+  assert.match(HOST_SRC, /POCKET_OPS\.AWAY_STOP/, 'host must implement cockpit.away.stop')
+  // the shared contract defines the literal operation names (single source)
+  assert.match(HOST_SRC, /POCKET_OPS/, 'host must use the shared cockpit contract')
+  // Phase 1 explicitly has NO approval response operations
+  assert.doesNotMatch(HOST_SRC, /approval\.respond|approval\.list/,
+    'Phase 1 must not implement approval operations')
+})
+
+test('client source: cockpit handoff opens the EXISTING session (no replacement)', () => {
+  assert.match(CLIENT_SRC, /sessions\.open\(/, 'client must use ctx.sessions.open(id) for handoff')
+  const handoff = CLIENT_SRC.slice(CLIENT_SRC.indexOf('cockpit'))
+  assert.doesNotMatch(handoff, /fork\(|create\(/,
+    'handoff must never create a replacement session')
+})
+
 test('client source: revoke sends targetDeviceId (never { id })', () => {
   assert.match(CLIENT_SRC, /rpc\('revoke',\s*\{\s*targetDeviceId:\s*id\s*\}/,
     'client must send { targetDeviceId } for revoke')

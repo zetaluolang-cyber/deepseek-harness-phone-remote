@@ -132,11 +132,15 @@ try {
         $p = Start-Process -FilePath $launcher -ArgumentList $bootArgs -WindowStyle Hidden `
             -RedirectStandardOutput $log -RedirectStandardError "$log.err" -PassThru
         $registered = $false
+        $pocket = $false
         for ($i = 0; $i -lt 90; $i++) {
             Start-Sleep -Seconds 2
             if (Test-Path $log) {
                 $txt = Get-Content $log -Raw -ErrorAction SilentlyContinue
-                if ($txt -match "host applied: /remfs channel registered") { $registered = $true; break }
+                if ($txt -match "host applied: /remfs \+ /pocket channels registered") {
+                    $registered = $true; $pocket = $true; break
+                }
+                if ($txt -match "host applied: /remfs channel registered") { $registered = $true }
             }
             if ($p.HasExited) { break }
         }
@@ -144,7 +148,7 @@ try {
             Write-Error "real-DSH boot: /remfs never registered with the installer-generated patch. Log:`n$(Get-Content $log -Raw -ErrorAction SilentlyContinue)"
             exit 1
         }
-        Write-Host "real-DSH boot: OK - /remfs registered using the installer-generated cordis.patch.yml"
+        Write-Host "real-DSH boot: OK - /remfs registered using the installer-generated cordis.patch.yml (pocket: $pocket)"
         Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 1
     }

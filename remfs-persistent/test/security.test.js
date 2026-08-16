@@ -9,7 +9,7 @@ import {
   normPath, hasTraversal, isWithin, segmentsDenied, deniedPath, canSetRoots,
   ensurePairingCode, rotatePairingCode, pairDevice, verifyDevice, listDevices,
   revokeDevice, revokeAllDevices, parsePairingCode, formatPairingCode,
-  securityFile, buildCrumbs,
+  securityFile, buildCrumbs, deviceHasCapability,
 } from '../lib/security.js'
 
 const DOCS = path.join(os.homedir(), 'Documents')
@@ -398,5 +398,39 @@ test('permission/read error on the store fails closed', async (t) => {
     await fsp.mkdir(f)
     const v = await verifyDevice('x', 'y', f)
     assert.equal(v.error, 'store-corrupt')
+  } finally { await rm(path.dirname(f), { recursive: true, force: true }) }
+})
+
+// Pocket Cockpit (v0.3 Phase 1): devices carry capabilities; legacy devices
+// (no capabilities field) migrate to the default files+cockpit+approval set.
+test('device capability: newly paired device gets files+cockpit+approval', async () => {
+  const f = await tempFile()
+  try {
+    const code = await ensurePairingCode(f)
+    const d = await pairDevice(code, 'phone', f)
+    const v = await verifyDevice(d.deviceId, d.credential, f)
+    assert.equal(v.ok, true)
+    assert.deepEqual(v.device.capabilities, ['files', 'cockpit', 'approval'])
+    assert.equal(deviceHasCapability(v.device, 'cockpit'), true)
+    assert.equal(deviceHasCapability(v.device, 'approval'), true)
+    // narrowing still gates correctly
+    assert.equal(deviceHasCapability({ capabilities: ['files'] }, 'cockpit'), false)
+  } finally { await rm(path.dirname(f), { recursive: true, force: true }) }
+})
+
+test('device capability: legacy device (no capabilities field) gets all defaults', async () => {
+  const f = await tempFile()
+  const fsp = await import('node:fs/promises')
+  try {
+    const code = await ensurePairingCode(f)
+    const d = await pairDevice(code, 'phone', f)
+    // strip the capabilities field to simulate a pre-cockpit device
+    const raw = JSON.parse(await fsp.readFile(f, 'utf8'))
+    delete raw.devices[0].capabilities
+    await fsp.writeFile(f, JSON.stringify(raw), 'utf8')
+    const v = await verifyDevice(d.deviceId, d.credential, f)
+    assert.equal(v.ok, true)
+    assert.deepEqual(v.device.capabilities, ['files', 'cockpit', 'approval'])
+    assert.equal(deviceHasCapability(v.device, 'cockpit'), true)
   } finally { await rm(path.dirname(f), { recursive: true, force: true }) }
 })

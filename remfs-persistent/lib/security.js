@@ -18,6 +18,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile, rename, copyFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
+import { DEFAULT_DEVICE_CAPABILITIES, hasCapability } from './cockpit/contract.js'
 
 // ---------------------------------------------------------------- constants
 
@@ -386,6 +387,11 @@ export async function pairDevice(code, deviceName, file = securityFile()) {
       createdAt: new Date().toISOString(),
       lastSeen: new Date().toISOString(),
       credentialHash: sha256(credential),
+      // Pocket Cockpit capability model (v0.3 Phase 1): every newly paired
+      // device gets files + cockpit + approval by default. Existing devices
+      // without the field migrate to the same default (hasCapability treats a
+      // missing/empty list as the default).
+      capabilities: DEFAULT_DEVICE_CAPABILITIES.slice(),
     })
     await saveStore(file, store)
     await writePairingTxt(consumedTxt(pairingTxtFile(file), new Date().toISOString()))
@@ -393,7 +399,8 @@ export async function pairDevice(code, deviceName, file = securityFile()) {
   })
 }
 
-/** Verify a device credential; updates lastSeen on success (under the lock). */
+/** Verify a device credential; updates lastSeen on success (under the lock).
+ *  The returned device carries `capabilities` (default for legacy devices). */
 export async function verifyDevice(deviceId, credential, file = securityFile()) {
   if (typeof deviceId !== 'string' || typeof credential !== 'string' || !deviceId || !credential) {
     return { error: ERR.AUTH_REQUIRED }
@@ -405,8 +412,17 @@ export async function verifyDevice(deviceId, credential, file = securityFile()) 
     if (sha256(credential) !== dev.credentialHash) return { error: ERR.AUTH_INVALID }
     dev.lastSeen = new Date().toISOString()
     await saveStore(file, store)
-    return { ok: true, device: dev }
+    // legacy devices (no capabilities field) surface the default set
+    const caps = Array.isArray(dev.capabilities) && dev.capabilities.length > 0
+      ? dev.capabilities
+      : DEFAULT_DEVICE_CAPABILITIES
+    return { ok: true, device: { ...dev, capabilities: caps.slice() } }
   })
+}
+
+/** True when a verified device has `cap` (defaults for legacy devices). */
+export function deviceHasCapability(device, cap) {
+  return hasCapability(device && device.capabilities, cap)
 }
 
 export async function listDevices(file = securityFile()) {

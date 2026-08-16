@@ -8,8 +8,10 @@
 // safe workspace-root resolution depends on them at apply time - relying on
 // accidental plugin ordering would make the fail-closed root resolution
 // nondeterministic.
-import { ensurePairingCode, rotatePairingCode } from './security.js'
+import { ensurePairingCode, rotatePairingCode, verifyDevice, deviceHasCapability } from './security.js'
 import { createDispatcher } from './dispatch.js'
+import { createCockpitService } from './cockpit/service.js'
+import { POCKET_OPS, CAPABILITIES } from './cockpit/contract.js'
 import { access, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -113,6 +115,38 @@ export default {
 
     conn.rpc.handle('/remfs', handler, { authority: 'trusted-host' })
 
+    // ── Pocket Cockpit (/pocket) — human supervision capability (v0.3 Phase 1)
+    // Separate namespace from /remfs: filesystem capability vs supervision
+    // capability have different permission semantics. Every /pocket operation
+    // requires a VALID device credential AND the 'cockpit' device capability;
+    // a legacy device (no capabilities field) gets the default set which
+    // includes cockpit. Fail closed: no device -> no cockpit.
+    const cockpit = createCockpitService(ctx)
+    const pocketErr = (code, message) => ({ ok: false, error: { code, message, details: {} } })
+
+    const pocketHandler = async (endpoint, payload) => {
+      const authRes = await verifyDevice(
+        payload && payload.deviceId,
+        payload && payload.credential,
+      )
+      if (authRes.error === 'store-corrupt') {
+        return pocketErr('store-corrupt', 'security store corrupt — see ~/.dsh/remfs-security.json.corrupt-*')
+      }
+      if (authRes.error) return pocketErr('auth-invalid', 'device authentication failed — re-pair the device')
+      if (!deviceHasCapability(authRes.device, CAPABILITIES.COCKPIT)) {
+        return pocketErr('capability-denied', 'device lacks the cockpit capability')
+      }
+      switch (endpoint) {
+        case POCKET_OPS.STATUS: return cockpit.status(authRes.device)
+        case POCKET_OPS.SESSIONS: return cockpit.sessions()
+        case POCKET_OPS.AWAY_START: return cockpit.awayStart()
+        case POCKET_OPS.AWAY_STOP: return cockpit.awayStop()
+        default: return pocketErr('bad-request', 'unknown /pocket endpoint: ' + String(endpoint))
+      }
+    }
+
+    conn.rpc.handle('/pocket', pocketHandler, { authority: 'trusted-host' })
+
     // Generate/refresh the pairing code and surface it PC-side. The code
     // regenerates at every startup when the previous one was used or expired,
     // so there is always a clear path to a fresh code.
@@ -147,6 +181,6 @@ export default {
       return () => { try { clearInterval(handle) } catch { /* ignore */ } }
     }, 'remfs pairing rotation watcher')
 
-    console.log('[remfs-persistent] host applied: /remfs channel registered')
+    console.log('[remfs-persistent] host applied: /remfs + /pocket channels registered')
   }
 }

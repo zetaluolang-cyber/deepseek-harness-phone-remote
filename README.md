@@ -1,15 +1,21 @@
-# DeepSeek Harness Remote Workspace
+# DeepSeek Harness Pocket Cockpit
 
-**Secure Remote Workspace & Filesystem Bridge for DeepSeek Harness.**
+**Leave your desk, not your agent.**
 
-> Your DeepSeek Harness, anywhere — the **native web UI**, over a secure network,
-> with **device-authenticated RPC** and a **capability-bounded filesystem**.
+A secure, zero-app mobile cockpit for DeepSeek Harness. Monitor running agents,
+handle approvals, review what changed while you were away, and continue the same
+session from your phone.
 
-This project does not replace the Harness UI. It turns Harness itself into a
-remote work environment: the phone opens the *real* DeepSeek Harness web UI over
-Tailscale (or your LAN), and a persistent plugin bridges the two gaps a browser
-can't close remotely — starting/resuming an agent in any folder, and reading,
-writing, uploading and downloading files on the host.
+- **👁 Monitor** — see what every running agent is doing.
+- **⚠ Decide** — handle consequential approvals from an authenticated device.
+- **↔ Handoff** — leave the desk and continue the same session from your phone.
+- **Δ Catch up** — see exactly what changed while you were away.
+
+> This project does not replace the Harness UI. It turns Harness itself into a
+> remote work environment: the phone opens the *real* DeepSeek Harness web UI over
+> Tailscale (or your LAN), and a persistent plugin bridges the gaps a browser
+> can't close remotely — starting/resuming an agent in any folder, reading and
+> writing files, and (v0.3) supervising running agents from a mobile cockpit.
 
 **English** | [中文](README.zh.md) · [Architecture](docs/architecture.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 

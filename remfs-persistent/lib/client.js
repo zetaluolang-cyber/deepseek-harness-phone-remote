@@ -74,6 +74,22 @@ window.__ModuleLoader__.load({
 .remfs-wsbtn{background:#4a6cf7;border:1px solid #4a6cf7;color:#fff;border-radius:8px;padding:9px 14px;cursor:pointer;font-size:13px;width:100%;text-align:center}
 .remfs-wsbtn:hover{filter:brightness(1.1)}
 .remfs-wsbtn:disabled{opacity:.5;cursor:default}
+.remfs-away{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;border-bottom:1px solid rgba(128,128,128,.15)}
+.remfs-away .st{font-size:12px;font-weight:600}
+.remfs-away.on{background:rgba(74,108,247,.12);border-color:rgba(74,108,247,.4)}
+.remfs-away .since{font-size:10px;color:var(--dsw-alias-label-secondary,#999)}
+.remfs-sec{padding:8px 12px 2px;font-size:11px;font-weight:700;color:var(--dsw-alias-label-secondary,#999);text-transform:uppercase;letter-spacing:.4px}
+.remfs-card{border:1px solid rgba(128,128,128,.2);border-radius:10px;margin:6px 12px;padding:9px 11px;display:flex;flex-direction:column;gap:6px;background:rgba(255,255,255,.02)}
+.remfs-card.need{background:rgba(224,108,108,.08);border-color:rgba(224,108,108,.45)}
+.remfs-card.fail{border-color:rgba(224,108,108,.4)}
+.remfs-card.ok{border-color:rgba(46,125,50,.4)}
+.remfs-card .tt{font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
+.remfs-card .st2{font-size:11px;color:var(--dsw-alias-label-secondary,#999)}
+.remfs-card .la{font-size:11px;color:var(--dsw-alias-label-secondary,#999);word-break:break-all}
+.remfs-card .delta{display:flex;gap:10px;font-size:10px;color:var(--dsw-alias-label-secondary,#999);flex-wrap:wrap}
+.remfs-card .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.remfs-open{background:transparent;border:1px solid rgba(74,108,247,.6);color:#7d97ff;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;flex:none}
+.remfs-open:hover{background:rgba(74,108,247,.15)}
 .remfs-hbtn{background:transparent;border:1px solid rgba(128,128,128,.3);border-radius:8px;color:inherit;font-size:13px;height:34px;padding:0 10px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
 .remfs-hbtn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.2))}
 .remfs-hbtn.open{border-color:#4a6cf7}
@@ -137,9 +153,17 @@ window.__ModuleLoader__.load({
     // ── i18n ─────────────────────────────────────────────────────────────────
     const L10N = {
       zh: {
-        tabSession: '＋ 新建会话', tabFiles: '📁 文件浏览',
-        headSession: '新建会话', headFiles: '文件浏览',
+        tabSession: '＋ 新建会话', tabFiles: '📁 文件浏览', tabCockpit: '🛸 驾驶舱',
+        headSession: '新建会话', headFiles: '文件浏览', headCockpit: 'Agent 驾驶舱',
         close: '✕ 关闭', loading: '加载中…',
+        awayTitle: '离席状态', awaySince: '已离开', awayStart: '🎒 开始离席', awayStop: '✅ 我回来了',
+        awayFor: '离开 {n}', notAway: '在线',
+        secNeedsYou: '🔴 需要你', secRunning: '🟢 运行中', secFinished: '✅ 已完成', secFailed: '❌ 失败', secIdle: '⚪ 空闲',
+        secEmpty: '暂无会话', openSession: '打开', openSessionTitle: '回到原会话',
+        runAt: '运行于', finishedAt: '完成于', failedAt: '失败于', lastAction: '最后动作',
+        filesChanged: '文件变更', toolCalls: '工具调用', errors: '错误', approvals: '审批',
+        awaitingApproval: '等待审批', attentionSummary: 'Agent 正在等待你',
+        noCockpitCap: '设备无驾驶舱权限', cockpitLoadFail: '驾驶舱加载失败',
         wsSection: '已有工作区(点击直接开新会话)', wsEmpty: '暂无,可从下方目录新建',
         wsSection2: '或选择文件夹作为新工作区',
         startHere: '🚀 在这里开始会话', continueHere: '🚀 在此继续会话', busy: '处理中…',
@@ -170,9 +194,17 @@ window.__ModuleLoader__.load({
         authFailed: '设备未授权,请重新配对'
       },
       en: {
-        tabSession: '＋ New Session', tabFiles: '📁 Files',
-        headSession: 'New Session', headFiles: 'Files',
+        tabSession: '＋ New Session', tabFiles: '📁 Files', tabCockpit: '🛸 Cockpit',
+        headSession: 'New Session', headFiles: 'Files', headCockpit: 'Agent Cockpit',
         close: '✕ Close', loading: 'Loading…',
+        awayTitle: 'Away status', awaySince: 'Away since', awayStart: '🎒 Start Away', awayStop: '✅ I\'m back',
+        awayFor: 'Away {n}', notAway: 'Online',
+        secNeedsYou: '🔴 Needs You', secRunning: '🟢 Running', secFinished: '✅ Finished', secFailed: '❌ Failed', secIdle: '⚪ Idle',
+        secEmpty: 'No sessions', openSession: 'Open', openSessionTitle: 'Return to the original session',
+        runAt: 'Started', finishedAt: 'Finished', failedAt: 'Failed', lastAction: 'Last action',
+        filesChanged: 'files changed', toolCalls: 'tool calls', errors: 'errors', approvals: 'approvals',
+        awaitingApproval: 'Awaiting approval', attentionSummary: 'Agent is waiting for you',
+        noCockpitCap: 'Device lacks cockpit capability', cockpitLoadFail: 'Cockpit failed to load',
         wsSection: 'Existing workspaces (tap to open a new session)', wsEmpty: 'None yet — pick a folder below',
         wsSection2: 'Or choose a folder as a new workspace',
         startHere: '🚀 Start a session here', continueHere: '🚀 Continue here', busy: 'Working…',
@@ -255,6 +287,137 @@ window.__ModuleLoader__.load({
       if (/denied|EACCES|EPERM/i.test(s)) return { lock: true, text: t('lockDenied') }
       if (/allowed|范围|outside/i.test(s)) return { lock: true, text: t('outside') }
       return { lock: false, text: s }
+    }
+
+    // ── Pocket Cockpit (v0.3 Phase 1) ──────────────────────────────────────
+    // Read-only agent supervision: away mode, session classification, one-tap
+    // handoff. RPC goes to /pocket (separate namespace from /remfs). The UI
+    // renders ONLY the stable cockpit contract - never DSH internals.
+    const pocketRpc = (conn, method, payload) => {
+      const c = getCred()
+      return conn.rpc.call('/pocket', method, Object.assign({}, payload, c || {}))
+    }
+
+    const fmtAway = (sinceIso, nowIso) => {
+      try {
+        const s = Date.parse(sinceIso)
+        const n = nowIso ? Date.parse(nowIso) : Date.now()
+        const mins = Math.max(0, Math.floor((n - s) / 60000))
+        if (mins < 60) return mins + 'm'
+        return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm'
+      } catch { return '…' }
+    }
+
+    // Section order on the phone: Needs You, Running, Finished, Failed, Idle.
+    const SECTION_OF = { NEEDS_ATTENTION: 'need', RUNNING: 'run', FINISHED: 'ok', FAILED: 'fail', IDLE: 'idle' }
+    const SECTION_LABEL = { need: 'secNeedsYou', run: 'secRunning', ok: 'secFinished', fail: 'secFailed', idle: 'secIdle' }
+
+    function CockpitPanel({ conn, sessionsApi, onClose }) {
+      const [away, setAway] = React.useState(null)
+      const [sessions, setSessions] = React.useState([])
+      const [loading, setLoading] = React.useState(true)
+      const [err, setErr] = React.useState(null)
+      const [busyAway, setBusyAway] = React.useState(false)
+      const [nowTick, setNowTick] = React.useState(Date.now())
+
+      const refresh = () => {
+        pocketRpc(conn, 'cockpit.sessions', {}).then((r) => {
+          if (r && r.ok) {
+            setSessions((r.value && r.value.sessions) || [])
+            setAway({ away: !!r.value.away, awaySince: r.value.awaySince || null })
+            setErr(null)
+          } else if (r && !r.ok && r.error && r.error.code === 'capability-denied') {
+            setErr(t('noCockpitCap'))
+          } else if (r && !r.ok) {
+            setErr(t('cockpitLoadFail'))
+          }
+          setLoading(false)
+        }).catch(() => { setLoading(false); setErr(t('cockpitLoadFail')) })
+      }
+      React.useEffect(() => { refresh() }, [])
+      React.useEffect(() => {
+        const h = setInterval(() => setNowTick(Date.now()), 30000)
+        return () => { try { clearInterval(h) } catch { /* ignore */ } }
+      }, [])
+
+      const toggleAway = () => {
+        if (busyAway) return
+        setBusyAway(true)
+        const op = away && away.away ? 'cockpit.away.stop' : 'cockpit.away.start'
+        pocketRpc(conn, op, {}).then((r) => {
+          if (r && r.ok) { setAway({ away: !!r.value.away, awaySince: r.value.awaySince || null }); refresh() }
+          else if (r && r.error && r.error.code === 'capability-denied') setErr(t('noCockpitCap'))
+          setBusyAway(false)
+        }).catch(() => setBusyAway(false))
+      }
+
+      const openSession = (id) => {
+        try {
+          if (sessionsApi && typeof sessionsApi.open === 'function') {
+            sessionsApi.open(id) // handoff: select the EXISTING session
+            if (onClose) onClose()
+          }
+        } catch { /* ignore */ }
+      }
+
+      const groups = {}
+      for (const s of sessions) {
+        const key = SECTION_OF[s.status] || 'idle'
+        ;(groups[key] = groups[key] || []).push(s)
+      }
+      const order = ['need', 'run', 'ok', 'fail', 'idle']
+
+      const card = (s) => {
+        const st = s.status
+        const cls = 'remfs-card' + (st === 'NEEDS_ATTENTION' ? ' need' : st === 'FAILED' ? ' fail' : st === 'FINISHED' ? ' ok' : '')
+        const timeTxt = st === 'RUNNING' ? t('runAt') : st === 'FAILED' ? t('failedAt') : st === 'FINISHED' ? t('finishedAt') : ''
+        const when = s.lastActivityAt ? new Date(s.lastActivityAt).toLocaleTimeString() : ''
+        const delta = s.delta || {}
+        const bits = []
+        if (delta.filesChanged) bits.push('✎ ' + delta.filesChanged + ' ' + t('filesChanged'))
+        if (delta.toolCalls) bits.push('⚙ ' + delta.toolCalls + ' ' + t('toolCalls'))
+        if (delta.errors) bits.push('✗ ' + delta.errors + ' ' + t('errors'))
+        return React.createElement('div', { key: s.sessionId, className: cls },
+          React.createElement('div', { className: 'row' },
+            React.createElement('div', { className: 'tt' },
+              st === 'NEEDS_ATTENTION' ? '⚠ ' : '',
+              s.title || s.sessionId
+            ),
+            React.createElement('button', { className: 'remfs-open', title: t('openSessionTitle'), onClick: () => openSession(s.sessionId) }, t('openSession'))
+          ),
+          st === 'NEEDS_ATTENTION' ? React.createElement('div', { className: 'st2' }, (s.attention && s.attention.summary) || t('attentionSummary')) : null,
+          s.lastAction && s.lastAction.summary ? React.createElement('div', { className: 'la' }, t('lastAction') + ': ' + s.lastAction.summary) : null,
+          React.createElement('div', { className: 'delta' },
+            when ? React.createElement('span', null, timeTxt + ' ' + when) : null,
+            bits.map((b, i) => React.createElement('span', { key: i }, b))
+          )
+        )
+      }
+
+      const awayHeader = away ? React.createElement('div', { className: 'remfs-away' + (away.away ? ' on' : '') },
+        React.createElement('div', null,
+          React.createElement('div', { className: 'st' }, away.away ? '🛫 ' + t('awaySince') : t('notAway')),
+          away.away && away.awaySince ? React.createElement('div', { className: 'since' }, t('awayFor', { n: fmtAway(away.awaySince, new Date(nowTick).toISOString()) })) : null
+        ),
+        React.createElement('button', { className: 'remfs-btn' + (away.away ? ' primary' : ''), disabled: busyAway, onClick: toggleAway }, away.away ? t('awayStop') : t('awayStart'))
+      ) : null
+
+      const body = err ? React.createElement('div', { className: 'remfs-err' }, err)
+        : loading ? React.createElement('div', { className: 'remfs-row' }, t('loading'))
+        : React.createElement(React.Fragment, null,
+            awayHeader,
+            order.map((key) => {
+              const items = groups[key] || []
+              if (items.length === 0) return null
+              return React.createElement(React.Fragment, { key },
+                React.createElement('div', { className: 'remfs-sec' }, t(SECTION_LABEL[key])),
+                items.map(card)
+              )
+            }),
+            sessions.length === 0 ? React.createElement('div', { className: 'remfs-sec' }, t('secEmpty')) : null
+          )
+
+      return React.createElement('div', { className: 'remfs-body' }, body)
     }
 
     function Workbench({ embedded, onClose, conn }) {
@@ -658,6 +821,7 @@ window.__ModuleLoader__.load({
           React.createElement('button', { className: 'remfs-btn remfs-close', onClick: onClose }, t('close'))
         ),
         React.createElement('div', { className: 'remfs-tabs' },
+          React.createElement('button', { className: 'remfs-tab' + (tab === 'cockpit' ? ' on' : ''), onClick: () => setTab('cockpit') }, t('tabCockpit')),
           React.createElement('button', { className: 'remfs-tab' + (tab === 'session' ? ' on' : ''), onClick: () => setTab('session') }, t('tabSession')),
           React.createElement('button', { className: 'remfs-tab' + (tab === 'files' ? ' on' : ''), onClick: () => setTab('files') }, t('tabFiles'))
         ),
@@ -669,7 +833,9 @@ window.__ModuleLoader__.load({
             React.createElement('button', { className: 'remfs-btn', onClick: () => setManaging(false) }, t('cancel'))
           )
         ) :
-        React.createElement('div', { className: 'remfs-body' }, tab === 'session' ? sessionBody : filesBody)
+        React.createElement('div', { className: 'remfs-body' },
+          tab === 'cockpit' ? React.createElement(CockpitPanel, { conn, sessionsApi: window.__remfsSessionsApi, onClose }) :
+          tab === 'session' ? sessionBody : filesBody)
       )
     }
 
@@ -717,6 +883,9 @@ window.__ModuleLoader__.load({
 
     const apply = (ctx) => {
       ctxWorkspaces = ctx.get('workspaces') || null
+      // Pocket Cockpit handoff: ctx.sessions.open(id) selects the EXISTING
+      // session (one-tap handoff without creating a replacement).
+      try { window.__remfsSessionsApi = ctx.get('sessions') || null } catch { window.__remfsSessionsApi = null }
       const conn = ctx.get('connection')
       if (conn === undefined) return
       const timer = ctx.get('timer')
@@ -808,7 +977,7 @@ window.__ModuleLoader__.load({
       ))
     }
 
-    const inject = ['slots', 'connection', 'workspaces']
+    const inject = ['slots', 'connection', 'workspaces', 'sessions']
     exports.apply = apply
     exports.inject = inject
     return module.exports
