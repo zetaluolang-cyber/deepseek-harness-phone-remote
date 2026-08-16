@@ -150,6 +150,11 @@ test('client source: Orb is a floating ball - shell.overlay, fixed, draggable, i
   assert.match(CLIENT_SRC, /\.remfs-orbwrap\{position:fixed/, 'ball CSS must float over the page')
   assert.match(CLIENT_SRC, /remfs-orb-tag/, 'ball keeps a text tag (icon+text, never color-only)')
   assert.match(orbBlock, /borderColor:\s*orb\.color/, 'ball accent ring must come from orbState.color')
+  // brand-whale logo face (user-requested: no more dark plain ball)
+  assert.match(orbBlock, /WHALE_LOGO_PATH/, 'ball face must be the brand whale logo')
+  assert.match(orbBlock, /remfs-orb-logo/, 'whale logo must render inside the ball')
+  assert.match(orbBlock, /remfs-orb-badge/, 'state icon must live in a corner badge')
+  assert.match(CLIENT_SRC, /linear-gradient\(145deg/, 'ball must be a bright gradient, not a dark disc')
 })
 
 test('client source: notification rules - NEEDS_USER/FAILED only, never RUNNING; click opens the session', () => {
