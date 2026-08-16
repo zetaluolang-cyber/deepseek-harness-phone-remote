@@ -922,17 +922,37 @@ window.__ModuleLoader__.load({
     }
 
     let open = false
+    let cockpitOpen = false
     const listeners = new Set()
+    const cockpitListeners = new Set()
     let ctxWorkspaces = null
 
     const setOpen = (v) => { open = v; listeners.forEach((fn) => fn()) }
     const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn) }
+    const setCockpitOpen = (v) => { cockpitOpen = v; cockpitListeners.forEach((fn) => fn()) }
+    const subscribeCockpit = (fn) => { cockpitListeners.add(fn); return () => cockpitListeners.delete(fn) }
 
+    // C-老师 design §16/§21: Cockpit is its own entry — the header button
+    // opens the COCKPIT directly (not the workbench drawer), so the phone's
+    // first tap lands on the attention router.
     function HeaderToggle() {
+      const [, force] = React.useState(0)
+      React.useEffect(() => subscribeCockpit(() => force((n) => n + 1)), [])
+      React.useEffect(() => subscribeLang(() => force((n) => n + 1)), [])
+      return React.createElement('button', {
+        className: 'remfs-hbtn' + (cockpitOpen ? ' open' : ''),
+        title: cockpitOpen ? t('toggleTitleOpen') : t('tabCockpit'),
+        onClick: () => setCockpitOpen(!cockpitOpen),
+      }, cockpitOpen ? t('close') : t('tabCockpit'))
+    }
+
+    // Separate drawer button for the workbench (Files / Sessions), so Cockpit
+    // and the workbench are independent entries.
+    function WorkbenchToggle() {
       const [, force] = React.useState(0)
       React.useEffect(() => subscribe(() => force((n) => n + 1)), [])
       React.useEffect(() => subscribeLang(() => force((n) => n + 1)), [])
-      return React.createElement('button', { className: 'remfs-hbtn' + (open ? ' open' : ''), title: open ? t('toggleTitleOpen') : t('toggleTitleClosed'), onClick: () => setOpen(!open) }, open ? t('close') : t('headerNew'))
+      return React.createElement('button', { className: 'remfs-hbtn' + (open ? ' open' : ''), title: open ? t('toggleTitleOpen') : t('headerNew'), onClick: () => setOpen(!open) }, open ? t('close') : t('headerNew'))
     }
 
     function OverlayBridge({ conn }) {
@@ -942,6 +962,26 @@ window.__ModuleLoader__.load({
       return React.createElement(React.Fragment, null,
         React.createElement('div', { className: 'remfs-backdrop', onClick: () => setOpen(false) }),
         React.createElement(Workbench, { embedded: false, onClose: () => setOpen(false), conn })
+      )
+    }
+
+    // C-老师 design §21: opening the cockpit shows the attention router
+    // directly — a dedicated full-panel view, not the workbench drawer.
+    function CockpitOverlayBridge({ conn }) {
+      const [, force] = React.useState(0)
+      React.useEffect(() => subscribeCockpit(() => force((n) => n + 1)), [])
+      if (!cockpitOpen) return null
+      return React.createElement(React.Fragment, null,
+        React.createElement('div', { className: 'remfs-backdrop', onClick: () => setCockpitOpen(false) }),
+        React.createElement('div', { className: 'remfs-panel' },
+          React.createElement('div', { className: 'remfs-head' },
+            React.createElement('b', null, t('headCockpit')),
+            React.createElement('span', { className: 'p' }, ''),
+            React.createElement('button', { className: 'remfs-btn', title: lang === 'zh' ? 'English' : '中文', onClick: toggleLang }, t('otherLang')),
+            React.createElement('button', { className: 'remfs-btn remfs-close', onClick: () => setCockpitOpen(false) }, t('close'))
+          ),
+          React.createElement(CockpitPanel, { conn, sessionsApi: window.__remfsSessionsApi, onClose: () => setCockpitOpen(false) })
+        )
       )
     }
 
@@ -1044,8 +1084,13 @@ window.__ModuleLoader__.load({
       })
 
       ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register(
-        { name: 'conversation.session.header.utilities', id: 'remfs.header', order: 20, label: t('slotLabel') },
+        { name: 'conversation.session.header.utilities', id: 'remfs.cockpit', order: 15, label: () => t('tabCockpit') },
         () => React.createElement(HeaderToggle, null)
+      ))
+
+      ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register(
+        { name: 'conversation.session.header.utilities', id: 'remfs.header', order: 20, label: () => t('slotLabel') },
+        () => React.createElement(WorkbenchToggle, null)
       ))
 
       ctx.slots.inject('settings.section', () => ctx.slots.register(
@@ -1056,6 +1101,11 @@ window.__ModuleLoader__.load({
       ctx.slots.inject('shell.overlay', () => ctx.slots.register(
         { name: 'shell.overlay', id: 'remfs.panel' },
         () => React.createElement(OverlayBridge, { conn })
+      ))
+
+      ctx.slots.inject('shell.overlay', () => ctx.slots.register(
+        { name: 'shell.overlay', id: 'remfs.cockpit.panel' },
+        () => React.createElement(CockpitOverlayBridge, { conn })
       ))
     }
 

@@ -118,6 +118,14 @@ test('client source: cockpit is the default home, attention-first order, per-sta
     'client must render the automatic since-last-check context')
 })
 
+test('client source: cockpit is an INDEPENDENT entry (header button opens the cockpit directly, not the workbench drawer)', () => {
+  // design §16/§21: the header button opens the cockpit, not the file drawer
+  assert.match(CLIENT_SRC, /setCockpitOpen/, 'client must own a dedicated cockpit-open state')
+  assert.match(CLIENT_SRC, /CockpitOverlayBridge/, 'client must render a dedicated cockpit overlay')
+  assert.match(CLIENT_SRC, /remfs\.cockpit/, 'client must register a dedicated cockpit entry in the header slot')
+  assert.match(CLIENT_SRC, /WorkbenchToggle/, 'client keeps a separate workbench entry (Files/Sessions)')
+})
+
 test('client source: revoke sends targetDeviceId (never { id })', () => {
   assert.match(CLIENT_SRC, /rpc\('revoke',\s*\{\s*targetDeviceId:\s*id\s*\}/,
     'client must send { targetDeviceId } for revoke')
