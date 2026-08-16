@@ -16,18 +16,10 @@
 import { classifySession } from './classify.js'
 import { computeDelta } from './delta.js'
 import { loadAwayState, startAway, stopAway } from './away.js'
+import { loadLastCheckState, markChecked } from './check.js'
 import {
-  STATUS, makeSessionDTO, awaySinceMs,
+  STATUS, STATUS_ORDER, makeSessionDTO, awaySinceMs,
 } from './contract.js'
-
-/** Sort order: NEEDS_ATTENTION first, then RUNNING, FAILED, FINISHED, IDLE. */
-const STATUS_ORDER = {
-  [STATUS.NEEDS_ATTENTION]: 0,
-  [STATUS.RUNNING]: 1,
-  [STATUS.FAILED]: 2,
-  [STATUS.FINISHED]: 3,
-  [STATUS.IDLE]: 4,
-}
 
 function err(code, message) {
   return { ok: false, error: { code, message, details: {} } }
@@ -36,10 +28,11 @@ function err(code, message) {
 /**
  * Build the host aggregator.
  * @param {Object} ctx - DSH context (ctx.get used defensively).
- * @param {Object} [opts] - { awayFile } overrides for tests.
+ * @param {Object} [opts] - { awayFile, checkFile } overrides for tests.
  */
 export function createCockpitService(ctx, opts = {}) {
   const awayFile = opts.awayFile
+  const checkFile = opts.checkFile
 
   /** Resolve one session's title: session/title event, else readTitle(). */
   async function sessionTitle(sessionId, events) {
@@ -140,16 +133,19 @@ export function createCockpitService(ctx, opts = {}) {
 
   return {
     /**
-     * cockpit.status — away state + device capabilities.
+     * cockpit.status — away + last-check + device capabilities.
      * @param {Object} device - verified device (has capabilities).
      */
     async status(device) {
       const away = await loadAwayState(awayFile)
+      const check = await loadLastCheckState(checkFile)
       return {
         ok: true,
         value: {
           away: away.away,
           awaySince: away.awaySince,
+          lastCockpitViewedAt: check.lastCockpitViewedAt,
+          lastCheckAt: check.lastCheckAt,
           serverTime: new Date().toISOString(),
           capabilities: (device && device.capabilities) || [],
         },
@@ -158,7 +154,8 @@ export function createCockpitService(ctx, opts = {}) {
 
     /**
      * cockpit.sessions — aggregated, classified, sorted cockpit DTOs.
-     * Delta counters use awaySince when away, else the whole log.
+     * Delta anchor (design §10): awaySince when Away Mode is active, else the
+     * automatic lastCockpitViewedAt — the user never has to Start Away first.
      */
     async sessions() {
       const sq = ctx.get && ctx.get('sessionQuery')
@@ -175,19 +172,31 @@ export function createCockpitService(ctx, opts = {}) {
       const wsMap = workspaceIndex()
       const live = liveSessionIds()
       const away = await loadAwayState(awayFile)
-      const sinceMs = awaySinceMs(away.awaySince)
+      const check = await loadLastCheckState(checkFile)
+      const sinceMs = away.away && awaySinceMs(away.awaySince) > 0
+        ? awaySinceMs(away.awaySince)
+        : check.lastCockpitViewedAt
 
       const dtos = []
       for (const record of list) {
         const dto = await aggregateSession(record, wsMap, live, sinceMs)
         if (dto) dtos.push(dto)
       }
+      // Attention-first order: NEEDS YOU > FAILED > RUNNING > FINISHED > IDLE.
       dtos.sort((a, b) => {
         const order = STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
         if (order !== 0) return order
         return b.lastActivityAt - a.lastActivityAt
       })
-      return { ok: true, value: { sessions: dtos, away: away.away, awaySince: away.awaySince } }
+      return {
+        ok: true,
+        value: {
+          sessions: dtos,
+          away: away.away,
+          awaySince: away.awaySince,
+          lastCockpitViewedAt: check.lastCockpitViewedAt,
+        },
+      }
     },
 
     /** cockpit.away.start — enter Away Mode (explicit; no presence detection). */
@@ -200,6 +209,12 @@ export function createCockpitService(ctx, opts = {}) {
     async awayStop() {
       const state = await stopAway(awayFile)
       return { ok: true, value: { away: state.away, awaySince: state.awaySince } }
+    },
+
+    /** cockpit.check — record an automatic "since last check" anchor. */
+    async check() {
+      const state = await markChecked(checkFile)
+      return { ok: true, value: { lastCockpitViewedAt: state.lastCockpitViewedAt, lastCheckAt: state.lastCheckAt } }
     },
   }
 }

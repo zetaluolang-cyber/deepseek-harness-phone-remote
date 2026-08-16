@@ -9,10 +9,11 @@ import { classifySession, hasPendingApproval, hasOpenTurn, lastTurnEndReason } f
 import { computeDelta } from '../lib/cockpit/delta.js'
 import { loadAwayState, startAway, stopAway, defaultAwayFile } from '../lib/cockpit/away.js'
 import {
-  STATUS, makeSessionDTO, hasCapability, DEFAULT_DEVICE_CAPABILITIES,
-  normalizeAwayState, awaySinceMs,
+  STATUS, STATUS_ORDER, STATUS_LABEL, STATUS_CTA, makeSessionDTO, hasCapability,
+  DEFAULT_DEVICE_CAPABILITIES, normalizeAwayState, awaySinceMs,
 } from '../lib/cockpit/contract.js'
 import { createCockpitService } from '../lib/cockpit/service.js'
+import { loadLastCheckState, markChecked, defaultCheckFile } from '../lib/cockpit/check.js'
 
 // ------------------------------------------------------------ event helpers
 
@@ -114,6 +115,7 @@ test('cockpit delta: counts tool calls, file changes, errors, approvals, test ru
   const events = [
     toolCall('write', '{"path":"C:\\\\a\\\\b.js"}', t0),
     toolCall('bash', '{"command":"node --test"}', t0 + 1000),
+    { ...ev('tool/result', { message: { role: 'tool', content: 'ok' }, meta: { testResults: { passed: 38 } } }, t0 + 1200) },
     toolCall('edit', '{"path":"C:\\\\a\\\\b.js"}', t0 + 2000),
     { ...ev('tool/result', { error: { name: 'E', code: 'E' } }, t0 + 3000) },
     approvalAsked('a1', t0 + 4000),
@@ -127,19 +129,23 @@ test('cockpit delta: counts tool calls, file changes, errors, approvals, test ru
   assert.equal(all.errors, 1) // tool/result error
   assert.equal(all.approvals, 1)
   assert.equal(all.testRuns, 1) // bash "node --test"
-  // since awaySince (t0 + 1500): only edit (t0+2000), tool/result error
-  // (t0+3000), approvals (t0+4000) fall after the window; write+bash are before
+  assert.equal(all.testsPassed, 38) // tool/result meta reports 38 passed
+  assert.equal(all.agentFinished, true) // turn ended completed
+  // since awaySince (t0 + 1500): edit (t0+2000), error result (t0+3000),
+  // approvals (t0+4000), turn (t0+5000/6000) fall after the window
   const since = computeDelta(events, t0 + 1500)
   assert.equal(since.toolCalls, 1)
   assert.equal(since.filesChanged, 1)
   assert.equal(since.errors, 1)
   assert.equal(since.approvals, 1)
   assert.equal(since.testRuns, 0)
+  assert.equal(since.testsPassed, 0)
+  assert.equal(since.agentFinished, true)
 })
 
 test('cockpit delta: empty log -> zero counters, hasEvents false', () => {
   const d = computeDelta([], 0)
-  assert.deepEqual(d, { filesChanged: 0, toolCalls: 0, errors: 0, approvals: 0, testRuns: 0, hasEvents: false })
+  assert.deepEqual(d, { filesChanged: 0, toolCalls: 0, errors: 0, approvals: 0, testRuns: 0, testsPassed: 0, agentFinished: false, hasEvents: false })
 })
 
 // ------------------------------------------------------------ contract
@@ -149,10 +155,23 @@ test('cockpit contract: makeSessionDTO is stable and defaulted', () => {
   assert.equal(dto.sessionId, 's1')
   assert.equal(dto.status, STATUS.RUNNING)
   assert.equal(dto.title, 'Untitled')
-  assert.deepEqual(dto.delta, { filesChanged: 0, toolCalls: 0, errors: 0 })
+  assert.deepEqual(dto.delta, { filesChanged: 0, toolCalls: 0, errors: 0, approvals: 0, testRuns: 0, testsPassed: 0, agentFinished: false })
   const empty = makeSessionDTO({})
   assert.equal(empty.status, STATUS.IDLE)
   assert.equal(empty.lastAction, null)
+})
+
+test('cockpit contract: attention-first order NEEDS YOU > FAILED > RUNNING > FINISHED > IDLE', () => {
+  assert.ok(STATUS_ORDER[STATUS.NEEDS_ATTENTION] < STATUS_ORDER[STATUS.FAILED])
+  assert.ok(STATUS_ORDER[STATUS.FAILED] < STATUS_ORDER[STATUS.RUNNING])
+  assert.ok(STATUS_ORDER[STATUS.RUNNING] < STATUS_ORDER[STATUS.FINISHED])
+  assert.ok(STATUS_ORDER[STATUS.FINISHED] < STATUS_ORDER[STATUS.IDLE])
+  // status language + CTA (design §5, §21)
+  assert.equal(STATUS_LABEL[STATUS.NEEDS_ATTENTION].text, 'NEEDS YOU')
+  assert.equal(STATUS_LABEL[STATUS.RUNNING].dot, '🟢')
+  assert.equal(STATUS_CTA[STATUS.NEEDS_ATTENTION], 'review')
+  assert.equal(STATUS_CTA[STATUS.FINISHED], 'catchup')
+  assert.equal(STATUS_CTA[STATUS.FAILED], 'inspect')
 })
 
 test('cockpit contract: capabilities default to files+cockpit+approval; hasCapability gates', () => {
@@ -219,7 +238,8 @@ test('cockpit service: aggregates and classifies sessions, sorted NEEDS_ATTENTIO
     const res = await svc.sessions()
     assert.equal(res.ok, true)
     const order = res.value.sessions.map((s) => s.sessionId)
-    assert.deepEqual(order, ['s-blocked', 's-running', 's-failed', 's-finished'])
+    // attention-first: NEEDS YOU > FAILED > RUNNING > FINISHED (design §4, §21)
+    assert.deepEqual(order, ['s-blocked', 's-failed', 's-running', 's-finished'])
     const byId = Object.fromEntries(res.value.sessions.map((s) => [s.sessionId, s]))
     assert.equal(byId['s-blocked'].status, STATUS.NEEDS_ATTENTION)
     assert.equal(byId['s-blocked'].attention.kind, 'approval')
@@ -255,6 +275,43 @@ test('cockpit service: away start/stop wired through status; delta uses awaySinc
     assert.equal(sessions.value.sessions[0].delta.toolCalls, 0) // all events before awaySince
     const stop = await svc.awayStop()
     assert.equal(stop.value.away, false)
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test('cockpit check: lastCockpitViewedAt anchors the delta automatically (no Away needed)', async () => {
+  const dir = await mkdtemp(path.join(process.cwd(), '.tmp-cockpit-'))
+  const awayFile = path.join(dir, 'pocket-away.json')
+  const checkFile = path.join(dir, 'pocket-check.json')
+  try {
+    const ctx = fakeCtx({
+      records: [{ id: 's1', header: { createdAt: t0 } }],
+      eventsBySession: {
+        's1': [
+          turnStart(1, t0),
+          toolCall('write', '{"path":"x"}', t0 + 100),
+          toolCall('bash', '{"command":"node --test"}', t0 + 200),
+          turnEnd('completed', 1, t0 + 300),
+        ],
+      },
+    })
+    const svc = createCockpitService(ctx, { awayFile, checkFile })
+    // default: no away, no check -> whole log counted
+    let res = await svc.sessions()
+    assert.equal(res.ok, true)
+    assert.equal(res.value.sessions[0].delta.toolCalls, 2)
+    assert.equal(res.value.lastCockpitViewedAt, 0)
+    // mark checked AFTER the tool calls -> delta only sees events after anchor
+    const check = await svc.check()
+    assert.ok(check.value.lastCockpitViewedAt > t0 + 300)
+    res = await svc.sessions()
+    assert.equal(res.value.sessions[0].delta.toolCalls, 0, 'events before last check must be excluded')
+    assert.ok(res.value.lastCockpitViewedAt > 0)
+    // status exposes lastCockpitViewedAt
+    const st = await svc.status({ capabilities: ['files', 'cockpit'] })
+    assert.equal(st.value.lastCockpitViewedAt, check.value.lastCockpitViewedAt)
+    // check.js persistence
+    assert.equal((await loadLastCheckState(checkFile)).lastCockpitViewedAt, check.value.lastCockpitViewedAt)
+    assert.ok(!defaultCheckFile().includes('remfs-security.json'))
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
 

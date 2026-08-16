@@ -141,6 +141,7 @@ export default {
         case POCKET_OPS.SESSIONS: return cockpit.sessions()
         case POCKET_OPS.AWAY_START: return cockpit.awayStart()
         case POCKET_OPS.AWAY_STOP: return cockpit.awayStop()
+        case POCKET_OPS.CHECK: return cockpit.check()
         default: return pocketErr('bad-request', 'unknown /pocket endpoint: ' + String(endpoint))
       }
     }

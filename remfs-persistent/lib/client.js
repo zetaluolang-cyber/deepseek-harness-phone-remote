@@ -158,7 +158,9 @@ window.__ModuleLoader__.load({
         close: '✕ 关闭', loading: '加载中…',
         awayTitle: '离席状态', awaySince: '已离开', awayStart: '🎒 开始离席', awayStop: '✅ 我回来了',
         awayFor: '离开 {n}', notAway: '在线',
-        secNeedsYou: '🔴 需要你', secRunning: '🟢 运行中', secFinished: '✅ 已完成', secFailed: '❌ 失败', secIdle: '⚪ 空闲',
+        sinceCheck: '上次查看 {n} 前', sinceLeave: '你离开后 {n}',
+        secNeedsYou: '🟠 需要你', secRunning: '🟢 运行中', secFinished: '✅ 已完成', secFailed: '🔴 失败', secIdle: '⚪ 空闲',
+        ctaReview: '查看', ctaOpen: '打开', ctaCatchUp: '回顾', ctaInspect: '检查',
         secEmpty: '暂无会话', openSession: '打开', openSessionTitle: '回到原会话',
         runAt: '运行于', finishedAt: '完成于', failedAt: '失败于', lastAction: '最后动作',
         filesChanged: '文件变更', toolCalls: '工具调用', errors: '错误', approvals: '审批',
@@ -199,7 +201,9 @@ window.__ModuleLoader__.load({
         close: '✕ Close', loading: 'Loading…',
         awayTitle: 'Away status', awaySince: 'Away since', awayStart: '🎒 Start Away', awayStop: '✅ I\'m back',
         awayFor: 'Away {n}', notAway: 'Online',
-        secNeedsYou: '🔴 Needs You', secRunning: '🟢 Running', secFinished: '✅ Finished', secFailed: '❌ Failed', secIdle: '⚪ Idle',
+        sinceCheck: 'Last checked {n} ago', sinceLeave: 'Since you left · {n}',
+        secNeedsYou: '🟠 Needs You', secRunning: '🟢 Running', secFinished: '✅ Finished', secFailed: '🔴 Failed', secIdle: '⚪ Idle',
+        ctaReview: 'Review', ctaOpen: 'Open', ctaCatchUp: 'Catch up', ctaInspect: 'Inspect',
         secEmpty: 'No sessions', openSession: 'Open', openSessionTitle: 'Return to the original session',
         runAt: 'Started', finishedAt: 'Finished', failedAt: 'Failed', lastAction: 'Last action',
         filesChanged: 'files changed', toolCalls: 'tool calls', errors: 'errors', approvals: 'approvals',
@@ -308,16 +312,19 @@ window.__ModuleLoader__.load({
       } catch { return '…' }
     }
 
-    // Section order on the phone: Needs You, Running, Finished, Failed, Idle.
-    const SECTION_OF = { NEEDS_ATTENTION: 'need', RUNNING: 'run', FINISHED: 'ok', FAILED: 'fail', IDLE: 'idle' }
-    const SECTION_LABEL = { need: 'secNeedsYou', run: 'secRunning', ok: 'secFinished', fail: 'secFailed', idle: 'secIdle' }
+    // Attention-first section order (C-老师 design §4, §21): Needs You >
+    // Failed > Running > Finished > Idle.
+    const SECTION_OF = { NEEDS_ATTENTION: 'need', FAILED: 'fail', RUNNING: 'run', FINISHED: 'ok', IDLE: 'idle' }
+    const SECTION_LABEL = { need: 'secNeedsYou', fail: 'secFailed', run: 'secRunning', ok: 'secFinished', idle: 'secIdle' }
 
     function CockpitPanel({ conn, sessionsApi, onClose }) {
       const [away, setAway] = React.useState(null)
       const [sessions, setSessions] = React.useState([])
+      const [lastViewed, setLastViewed] = React.useState(0)
       const [loading, setLoading] = React.useState(true)
       const [err, setErr] = React.useState(null)
       const [busyAway, setBusyAway] = React.useState(false)
+      const [menuOpen, setMenuOpen] = React.useState(false)
       const [nowTick, setNowTick] = React.useState(Date.now())
 
       const refresh = () => {
@@ -325,6 +332,7 @@ window.__ModuleLoader__.load({
           if (r && r.ok) {
             setSessions((r.value && r.value.sessions) || [])
             setAway({ away: !!r.value.away, awaySince: r.value.awaySince || null })
+            setLastViewed(Number(r.value.lastCockpitViewedAt) || 0)
             setErr(null)
           } else if (r && !r.ok && r.error && r.error.code === 'capability-denied') {
             setErr(t('noCockpitCap'))
@@ -336,6 +344,9 @@ window.__ModuleLoader__.load({
       }
       React.useEffect(() => { refresh() }, [])
       React.useEffect(() => {
+        // design §10: opening the cockpit records the automatic last-check
+        // anchor, so the delta has a default "since last check" boundary
+        pocketRpc(conn, 'cockpit.check', {}).catch(() => { /* best-effort */ })
         const h = setInterval(() => setNowTick(Date.now()), 30000)
         return () => { try { clearInterval(h) } catch { /* ignore */ } }
       }, [])
@@ -365,47 +376,118 @@ window.__ModuleLoader__.load({
         const key = SECTION_OF[s.status] || 'idle'
         ;(groups[key] = groups[key] || []).push(s)
       }
-      const order = ['need', 'run', 'ok', 'fail', 'idle']
+      const order = ['need', 'fail', 'run', 'ok', 'idle']
 
+      // Heterogeneous cards: each status shows the information that matters
+      // for THAT status (design §7) and its own CTA (design §5, §21).
       const card = (s) => {
         const st = s.status
-        const cls = 'remfs-card' + (st === 'NEEDS_ATTENTION' ? ' need' : st === 'FAILED' ? ' fail' : st === 'FINISHED' ? ' ok' : '')
-        const timeTxt = st === 'RUNNING' ? t('runAt') : st === 'FAILED' ? t('failedAt') : st === 'FINISHED' ? t('finishedAt') : ''
-        const when = s.lastActivityAt ? new Date(s.lastActivityAt).toLocaleTimeString() : ''
         const delta = s.delta || {}
-        const bits = []
-        if (delta.filesChanged) bits.push('✎ ' + delta.filesChanged + ' ' + t('filesChanged'))
-        if (delta.toolCalls) bits.push('⚙ ' + delta.toolCalls + ' ' + t('toolCalls'))
-        if (delta.errors) bits.push('✗ ' + delta.errors + ' ' + t('errors'))
-        return React.createElement('div', { key: s.sessionId, className: cls },
-          React.createElement('div', { className: 'row' },
-            React.createElement('div', { className: 'tt' },
-              st === 'NEEDS_ATTENTION' ? '⚠ ' : '',
-              s.title || s.sessionId
+        const when = s.lastActivityAt ? new Date(s.lastActivityAt).toLocaleTimeString() : ''
+        const base = { key: s.sessionId }
+        const titleRow = React.createElement('div', { className: 'row' },
+          React.createElement('div', { className: 'tt' }, s.title || s.sessionId)
+        )
+        if (st === 'NEEDS_ATTENTION') {
+          const cls = 'remfs-card need'
+          return React.createElement('div', Object.assign({ className: cls }, base),
+            titleRow,
+            React.createElement('div', { className: 'st2' }, '⚠ ' + ((s.attention && s.attention.summary) || t('attentionSummary'))),
+            s.lastAction && s.lastAction.summary ? React.createElement('div', { className: 'la' }, s.lastAction.summary) : null,
+            React.createElement('div', { className: 'delta' },
+              React.createElement('span', null, t('awaitingApproval')),
+              when ? React.createElement('span', null, when) : null
             ),
-            React.createElement('button', { className: 'remfs-open', title: t('openSessionTitle'), onClick: () => openSession(s.sessionId) }, t('openSession'))
-          ),
-          st === 'NEEDS_ATTENTION' ? React.createElement('div', { className: 'st2' }, (s.attention && s.attention.summary) || t('attentionSummary')) : null,
-          s.lastAction && s.lastAction.summary ? React.createElement('div', { className: 'la' }, t('lastAction') + ': ' + s.lastAction.summary) : null,
-          React.createElement('div', { className: 'delta' },
-            when ? React.createElement('span', null, timeTxt + ' ' + when) : null,
-            bits.map((b, i) => React.createElement('span', { key: i }, b))
+            React.createElement('div', { className: 'row' },
+              React.createElement('span', null, ''),
+              React.createElement('button', { className: 'remfs-open', title: t('openSessionTitle'), onClick: () => openSession(s.sessionId) }, t('ctaReview'))
+            )
+          )
+        }
+        if (st === 'FAILED') {
+          const cls = 'remfs-card fail'
+          return React.createElement('div', Object.assign({ className: cls }, base),
+            titleRow,
+            s.lastAction && s.lastAction.summary ? React.createElement('div', { className: 'la' }, t('lastAction') + ': ' + s.lastAction.summary) : null,
+            React.createElement('div', { className: 'delta' },
+              when ? React.createElement('span', null, t('failedAt') + ' ' + when) : null,
+              delta.errors ? React.createElement('span', null, '✗ ' + delta.errors + ' ' + t('errors')) : null
+            ),
+            React.createElement('div', { className: 'row' },
+              React.createElement('span', null, ''),
+              React.createElement('button', { className: 'remfs-open', onClick: () => openSession(s.sessionId) }, t('ctaInspect'))
+            )
+          )
+        }
+        if (st === 'RUNNING') {
+          const cls = 'remfs-card run'
+          return React.createElement('div', Object.assign({ className: cls }, base),
+            titleRow,
+            s.lastAction && s.lastAction.summary ? React.createElement('div', { className: 'la' }, s.lastAction.summary) : null,
+            React.createElement('div', { className: 'delta' },
+              when ? React.createElement('span', null, t('runAt') + ' ' + when) : null,
+              delta.filesChanged ? React.createElement('span', null, '✎ ' + delta.filesChanged + ' ' + t('filesChanged')) : null
+            ),
+            React.createElement('div', { className: 'row' },
+              React.createElement('span', null, ''),
+              React.createElement('button', { className: 'remfs-open', onClick: () => openSession(s.sessionId) }, t('ctaOpen'))
+            )
+          )
+        }
+        if (st === 'FINISHED') {
+          const cls = 'remfs-card ok'
+          return React.createElement('div', Object.assign({ className: cls }, base),
+            titleRow,
+            delta.testsPassed ? React.createElement('div', { className: 'st2' }, '✅ ' + delta.testsPassed + ' ' + t('secFinished')) : null,
+            React.createElement('div', { className: 'delta' },
+              when ? React.createElement('span', null, t('finishedAt') + ' ' + when) : null,
+              delta.filesChanged ? React.createElement('span', null, '✎ ' + delta.filesChanged + ' ' + t('filesChanged')) : null
+            ),
+            React.createElement('div', { className: 'row' },
+              React.createElement('span', null, ''),
+              React.createElement('button', { className: 'remfs-open', onClick: () => openSession(s.sessionId) }, t('ctaCatchUp'))
+            )
+          )
+        }
+        // IDLE: minimal card, [Open]
+        const cls = 'remfs-card'
+        return React.createElement('div', Object.assign({ className: cls }, base),
+          titleRow,
+          React.createElement('div', { className: 'delta' }, when ? React.createElement('span', null, when) : null),
+          React.createElement('div', { className: 'row' },
+            React.createElement('span', null, ''),
+            React.createElement('button', { className: 'remfs-open', onClick: () => openSession(s.sessionId) }, t('ctaOpen'))
           )
         )
       }
 
-      const awayHeader = away ? React.createElement('div', { className: 'remfs-away' + (away.away ? ' on' : '') },
+      // Header: automatic "since last check" (design §10) + a ⋯ menu holding
+      // the optional Away anchor (design §11 - away is NOT the hero button).
+      const header = React.createElement('div', { className: 'remfs-away' + (away && away.away ? ' on' : '') },
         React.createElement('div', null,
-          React.createElement('div', { className: 'st' }, away.away ? '🛫 ' + t('awaySince') : t('notAway')),
-          away.away && away.awaySince ? React.createElement('div', { className: 'since' }, t('awayFor', { n: fmtAway(away.awaySince, new Date(nowTick).toISOString()) })) : null
+          React.createElement('div', { className: 'st' },
+            away && away.away && away.awaySince
+              ? t('sinceLeave', { n: fmtAway(away.awaySince, new Date(nowTick).toISOString()) })
+              : lastViewed > 0
+                ? t('sinceCheck', { n: fmtAway(new Date(lastViewed).toISOString(), new Date(nowTick).toISOString()) })
+                : t('notAway')
+          ),
+          React.createElement('div', { className: 'since' },
+            (away && away.away ? '🛫 ' : '👁 ') + (away && away.away ? t('awaySince') : '')
+          )
         ),
-        React.createElement('button', { className: 'remfs-btn' + (away.away ? ' primary' : ''), disabled: busyAway, onClick: toggleAway }, away.away ? t('awayStop') : t('awayStart'))
-      ) : null
+        React.createElement('div', { style: { display: 'flex', gap: 6, alignItems: 'center' } },
+          menuOpen ? React.createElement(React.Fragment, null,
+            React.createElement('button', { className: 'remfs-btn', disabled: busyAway, onClick: toggleAway }, away && away.away ? t('awayStop') : t('awayStart')),
+            React.createElement('button', { className: 'remfs-btn', onClick: () => setMenuOpen(false) }, t('cancel'))
+          ) : React.createElement('button', { className: 'remfs-btn', onClick: () => setMenuOpen(true) }, '⋯')
+        )
+      )
 
       const body = err ? React.createElement('div', { className: 'remfs-err' }, err)
         : loading ? React.createElement('div', { className: 'remfs-row' }, t('loading'))
         : React.createElement(React.Fragment, null,
-            awayHeader,
+            header,
             order.map((key) => {
               const items = groups[key] || []
               if (items.length === 0) return null
@@ -421,7 +503,7 @@ window.__ModuleLoader__.load({
     }
 
     function Workbench({ embedded, onClose, conn }) {
-      const [tab, setTab] = React.useState('session')
+      const [tab, setTab] = React.useState('cockpit')
       const [path, setPath] = React.useState('')
       const [parent, setParent] = React.useState(null)
       const [allowed, setAllowed] = React.useState([])

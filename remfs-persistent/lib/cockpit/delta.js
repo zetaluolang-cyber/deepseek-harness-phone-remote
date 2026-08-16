@@ -29,16 +29,17 @@ const TEST_TOOL_RE = /test|pytest|jest|vitest|mocha|rspec/i
 /**
  * Compute the away delta for one session.
  * @param {Array<Object>} events - session events with `type` and `time` (ms).
- * @param {number} [awaySinceMs] - ms epoch; 0/undefined counts the whole log.
+ * @param {number} [sinceMs] - ms epoch; 0/undefined counts the whole log.
  * @returns {{ filesChanged: number, toolCalls: number, errors: number,
- *   approvals: number, testRuns: number, hasEvents: boolean }}
+ *   approvals: number, testRuns: number, testsPassed: number,
+ *   agentFinished: boolean, hasEvents: boolean }}
  */
-export function computeDelta(events, awaySinceMs = 0) {
-  const out = { filesChanged: 0, toolCalls: 0, errors: 0, approvals: 0, testRuns: 0, hasEvents: false }
+export function computeDelta(events, sinceMs = 0) {
+  const out = { filesChanged: 0, toolCalls: 0, errors: 0, approvals: 0, testRuns: 0, testsPassed: 0, agentFinished: false, hasEvents: false }
   const list = Array.isArray(events) ? events : []
   for (const e of list) {
     if (!e || typeof e.type !== 'string') continue
-    if (awaySinceMs > 0 && Number(e.time) < awaySinceMs) continue
+    if (sinceMs > 0 && Number(e.time) < sinceMs) continue
     out.hasEvents = true
     switch (e.type) {
       case 'tool/call': {
@@ -53,6 +54,16 @@ export function computeDelta(events, awaySinceMs = 0) {
       }
       case 'tool/result': {
         if ((e.data && e.data.error) || e.error) out.errors += 1
+        // tests passed: a successful tool/result whose text/meta reports a
+        // passing test run (best-effort; may undercount, never overcount).
+        // Accepts both "38 tests passed" / "38 passed" and {"passed":38}.
+        if (!((e.data && e.data.error) || e.error)) {
+          const text = String((e.data && e.data.message) || (e.message) || '')
+          const meta = JSON.stringify((e.data && e.data.meta) || e.meta || '')
+          const hay = text + ' ' + meta
+          const m = /(\d+)\s*(tests?\s+)?passed/i.exec(hay) || /passed["']?\s*[:=]\s*(\d+)/i.exec(hay)
+          if (m) out.testsPassed += parseInt(m[1] || m[2], 10) || 0
+        }
         break
       }
       case 'turn/end': {
@@ -60,6 +71,7 @@ export function computeDelta(events, awaySinceMs = 0) {
           ? String(e.data.reason.kind)
           : (e.reason && e.reason.kind ? String(e.reason.kind) : '')
         if (kind === 'error') out.errors += 1
+        if (kind === 'completed') out.agentFinished = true
         break
       }
       case 'approval/asked': {

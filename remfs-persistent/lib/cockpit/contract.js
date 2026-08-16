@@ -35,7 +35,8 @@ export const DEFAULT_DEVICE_CAPABILITIES = Object.freeze([
   CAPABILITIES.APPROVAL,
 ])
 
-/** Session status values exposed to the phone. */
+/** Session status values exposed to the phone (C-老师 design: NEEDS YOU is
+ *  the highest-priority attention state; FAILED ranks above RUNNING). */
 export const STATUS = Object.freeze({
   RUNNING: 'RUNNING',
   NEEDS_ATTENTION: 'NEEDS_ATTENTION',
@@ -44,13 +45,66 @@ export const STATUS = Object.freeze({
   IDLE: 'IDLE',
 })
 
-/** /pocket operations (Phase 1 — read-only cockpit + away mode). */
+/** Display order on the phone: attention first, failure above running.
+ *  NEEDS YOU > FAILED > RUNNING > FINISHED > IDLE (design §4, §21). */
+export const STATUS_ORDER = Object.freeze({
+  [STATUS.NEEDS_ATTENTION]: 0,
+  [STATUS.FAILED]: 1,
+  [STATUS.RUNNING]: 2,
+  [STATUS.FINISHED]: 3,
+  [STATUS.IDLE]: 4,
+})
+
+/** User-facing status language (design §5): 🟠 NEEDS YOU, 🟢 RUNNING,
+ *  ✅ FINISHED, 🔴 FAILED, ⚪ IDLE. Kept in the contract so the client never
+ *  invents its own labels. */
+export const STATUS_LABEL = Object.freeze({
+  [STATUS.NEEDS_ATTENTION]: { dot: '🟠', text: 'NEEDS YOU' },
+  [STATUS.RUNNING]: { dot: '🟢', text: 'RUNNING' },
+  [STATUS.FINISHED]: { dot: '✅', text: 'FINISHED' },
+  [STATUS.FAILED]: { dot: '🔴', text: 'FAILED' },
+  [STATUS.IDLE]: { dot: '⚪', text: 'IDLE' },
+})
+
+/** Primary CTA per status (design §5, §21): Review / Open / Catch up / Inspect. */
+export const STATUS_CTA = Object.freeze({
+  [STATUS.NEEDS_ATTENTION]: 'review',
+  [STATUS.RUNNING]: 'open',
+  [STATUS.FINISHED]: 'catchup',
+  [STATUS.FAILED]: 'inspect',
+  [STATUS.IDLE]: 'open',
+})
+
+/** /pocket operations (Phase 1 — read-only cockpit + away + last-check). */
 export const POCKET_OPS = Object.freeze({
   STATUS: 'cockpit.status',
   SESSIONS: 'cockpit.sessions',
   AWAY_START: 'cockpit.away.start',
   AWAY_STOP: 'cockpit.away.stop',
+  CHECK: 'cockpit.check',
 })
+
+/**
+ * Last-check state (design §10, §20-P7): the system AUTOMATICALLY records when
+ * the cockpit was last viewed, so the delta has a default attention boundary
+ * ("Since your last check") without requiring the user to Start Away first.
+ * Away Mode remains as an optional explicit anchor ("Since you left").
+ * Stored in the project profile state dir, separate from remfs-security.json.
+ * @typedef {Object} LastCheckState
+ * @property {number} lastCockpitViewedAt — ms epoch of the last cockpit.viewed
+ * @property {number} lastCheckAt         — ms epoch of the last cockpit.check
+ */
+
+/** Normalize a parsed last-check payload; fails closed (never trusts junk). */
+export function normalizeLastCheckState(raw) {
+  if (!raw || typeof raw !== 'object') return { lastCockpitViewedAt: 0, lastCheckAt: 0 }
+  const view = Number(raw.lastCockpitViewedAt)
+  const check = Number(raw.lastCheckAt)
+  return {
+    lastCockpitViewedAt: Number.isFinite(view) && view > 0 ? view : 0,
+    lastCheckAt: Number.isFinite(check) && check > 0 ? check : 0,
+  }
+}
 
 /**
  * One cockpit session DTO. The ONLY shape the client reads for a session.
@@ -90,6 +144,10 @@ export function makeSessionDTO(parts) {
       filesChanged: Number((p.delta && p.delta.filesChanged) || 0),
       toolCalls: Number((p.delta && p.delta.toolCalls) || 0),
       errors: Number((p.delta && p.delta.errors) || 0),
+      approvals: Number((p.delta && p.delta.approvals) || 0),
+      testRuns: Number((p.delta && p.delta.testRuns) || 0),
+      testsPassed: Number((p.delta && p.delta.testsPassed) || 0),
+      agentFinished: !!(p.delta && p.delta.agentFinished),
     },
   }
 }

@@ -91,6 +91,7 @@ test('host source: /pocket implements cockpit.status/sessions and away start/sto
   assert.match(HOST_SRC, /POCKET_OPS\.SESSIONS/, 'host must implement cockpit.sessions')
   assert.match(HOST_SRC, /POCKET_OPS\.AWAY_START/, 'host must implement cockpit.away.start')
   assert.match(HOST_SRC, /POCKET_OPS\.AWAY_STOP/, 'host must implement cockpit.away.stop')
+  assert.match(HOST_SRC, /POCKET_OPS\.CHECK/, 'host must implement cockpit.check (since-last-check anchor)')
   // the shared contract defines the literal operation names (single source)
   assert.match(HOST_SRC, /POCKET_OPS/, 'host must use the shared cockpit contract')
   // Phase 1 explicitly has NO approval response operations
@@ -103,6 +104,18 @@ test('client source: cockpit handoff opens the EXISTING session (no replacement)
   const handoff = CLIENT_SRC.slice(CLIENT_SRC.indexOf('cockpit'))
   assert.doesNotMatch(handoff, /fork\(|create\(/,
     'handoff must never create a replacement session')
+})
+
+test('client source: cockpit is the default home, attention-first order, per-status CTA, since-last-check', () => {
+  // design §21: Cockpit is the default view; away is NOT the hero button
+  assert.match(CLIENT_SRC, /useState\('cockpit'\)/, 'cockpit must be the default tab')
+  assert.match(CLIENT_SRC, /NEEDS YOU|Needs You/, 'client must render Needs You section')
+  assert.match(CLIENT_SRC, /Catch up|catchup/, 'Finished card must offer Catch up')
+  assert.match(CLIENT_SRC, /Inspect|inspect/, 'Failed card must offer Inspect')
+  assert.match(CLIENT_SRC, /Review|review/, 'Needs You card must offer Review')
+  // since-last-check copy (design §10)
+  assert.match(CLIENT_SRC, /lastCockpitViewedAt|Since your last check|since your last check/,
+    'client must render the automatic since-last-check context')
 })
 
 test('client source: revoke sends targetDeviceId (never { id })', () => {
