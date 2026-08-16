@@ -334,10 +334,16 @@ window.__ModuleLoader__.load({
             setAway({ away: !!r.value.away, awaySince: r.value.awaySince || null })
             setLastViewed(Number(r.value.lastCockpitViewedAt) || 0)
             setErr(null)
+          } else if (r && !r.ok && r.error && (r.error.code === 'auth-invalid' || r.error.code === 'auth-required')) {
+            // Device credential no longer matches the host store: clear the
+            // stale credential so the user can re-pair (the workbench panel
+            // shows the pairing form).
+            clearCred()
+            setErr({ lock: true, text: t('authFailed') })
           } else if (r && !r.ok && r.error && r.error.code === 'capability-denied') {
             setErr(t('noCockpitCap'))
           } else if (r && !r.ok) {
-            setErr(t('cockpitLoadFail'))
+            setErr(t('cockpitLoadFail') + (r.error && r.error.code ? ' (' + r.error.code + ')' : ''))
           }
           setLoading(false)
         }).catch(() => { setLoading(false); setErr(t('cockpitLoadFail')) })
@@ -484,7 +490,11 @@ window.__ModuleLoader__.load({
         )
       )
 
-      const body = err ? React.createElement('div', { className: 'remfs-err' }, err)
+      const errText = err ? (typeof err === 'string' ? err : (err && err.text) || String(err)) : null
+      const body = err ? React.createElement('div', { className: 'remfs-err' + (err && err.lock ? ' lock' : '') },
+        errText,
+        err && err.lock ? React.createElement('button', { className: 'remfs-btn', style: { marginTop: 8, display: 'block' }, onClick: () => { setCockpitOpen(false); setOpen(true) } }, t('pairBtn') + ' →') : null
+      )
         : loading ? React.createElement('div', { className: 'remfs-row' }, t('loading'))
         : React.createElement(React.Fragment, null,
             header,
