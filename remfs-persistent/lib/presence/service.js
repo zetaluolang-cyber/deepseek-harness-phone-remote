@@ -30,6 +30,121 @@ function err(code, message) {
   return { ok: false, error: { code, message, details: {} } }
 }
 
+// ── Pure event-derivation helpers ──────────────────────────────────────────
+// File-level exports so the Dogfood CLI (scripts/dogfood-board.js) derives
+// state from the SAME logic the live service uses (single source of truth,
+// design §25). The service wires real ctx data in; these functions only look
+// at event records [{ type, time, data }].
+
+/** True when an approval/asked has no matching decided (design §4.4). */
+export function hasPendingApproval(events) {
+  const asked = new Set()
+  for (const e of events) {
+    if (e.type === 'approval/asked') {
+      const id = e.data && e.data.id != null ? String(e.data.id) : null
+      if (id) asked.add(id)
+    } else if (e.type === 'approval/decided') {
+      const id = e.data && e.data.id != null ? String(e.data.id) : null
+      if (id) asked.delete(id)
+    }
+  }
+  return asked.size > 0
+}
+
+/** True when the last turn ended 'error' or the last CLOSED turn had a tool
+ *  failure. A still-open turn is NOT a failure: the agent is working and an
+ *  error may self-recover (design §4.2: FAILED = stopped and cannot
+ *  self-recover). */
+export function terminalFailure(events) {
+  if (hasOpenTurn(events)) return false
+  const lastReason = lastTurnEndKind(events)
+  if (lastReason === 'error') return true
+  if (lastReason === 'completed') return hasToolErrorInLastTurn(events)
+  return false
+}
+
+/** True when the last turn ended 'completed' and no turn is open. */
+export function completed(events) {
+  return lastTurnEndKind(events) === 'completed' && !hasOpenTurn(events)
+}
+
+/** True when a turn is open or a live agent drives the session. */
+export function agentRunning(events, live) {
+  if (live) return true
+  return hasOpenTurn(events)
+}
+
+/** Last turn/end reason.kind (null when none). */
+export function lastTurnEndKind(events) {
+  let kind = null
+  for (const e of events) {
+    if (e.type !== 'turn/end') continue
+    kind = e.data && e.data.reason && e.data.reason.kind ? String(e.data.reason.kind) : 'completed'
+  }
+  return kind
+}
+
+/** True when the last CLOSED turn contains a tool/result.error. The open
+ *  (current) turn is excluded: its errors are recoverable while it runs. */
+export function hasToolErrorInLastTurn(events) {
+  let endIdx = -1
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type === 'turn/end') { endIdx = i; break }
+  }
+  if (endIdx < 0) return false
+  let startIdx = 0
+  for (let i = endIdx - 1; i >= 0; i--) {
+    if (events[i].type === 'turn/start') { startIdx = i; break }
+  }
+  for (let i = startIdx; i < endIdx; i++) {
+    const e = events[i]
+    if (e.type === 'tool/result' && ((e.data && e.data.error) || e.error)) return true
+  }
+  return false
+}
+
+export function hasOpenTurn(events) {
+  let open = false
+  for (const e of events) {
+    if (e.type === 'turn/start') open = true
+    else if (e.type === 'turn/end') open = false
+  }
+  return open
+}
+
+/** Count file-mutation tool calls (for STALE facts). */
+export function fileChangeCount(events) {
+  let n = 0
+  for (const e of events) {
+    if (e.type !== 'tool/call') continue
+    const name = String((e.data && e.data.name) || e.name || '')
+    if (/(^|\/)(write|edit)(_|$)/.test(name)) n += 1
+  }
+  return n
+}
+
+/** Title from the LAST session/title event ("" when absent). */
+export function titleFromEvents(events) {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]
+    if (e.type === 'session/title' && e.data && e.data.title) return String(e.data.title)
+  }
+  return ''
+}
+
+/** First event time (ms epoch; 0 when none). */
+export function firstTime(events) {
+  for (const e of events) if (e && Number(e.time)) return Number(e.time)
+  return 0
+}
+
+/** Last event time (ms epoch; 0 when none). */
+export function lastTime(events) {
+  let t = 0
+  for (const e of events) if (e && Number(e.time)) t = Number(e.time)
+  return t
+}
+
 /**
  * Build the presence aggregator.
  * @param {Object} ctx - DSH context (ctx.get used defensively).
@@ -78,94 +193,15 @@ export function createPresenceService(ctx, opts = {}) {
     return out
   }
 
-  /** True when an approval/asked has no matching decided (design §4.4). */
-  function hasPendingApproval(events) {
-    const asked = new Set()
-    for (const e of events) {
-      if (e.type === 'approval/asked') {
-        const id = e.data && e.data.id != null ? String(e.data.id) : null
-        if (id) asked.add(id)
-      } else if (e.type === 'approval/decided') {
-        const id = e.data && e.data.id != null ? String(e.data.id) : null
-        if (id) asked.delete(id)
-      }
-    }
-    return asked.size > 0
-  }
-
-  /** True when the last turn ended 'error' or the last turn had a tool failure. */
-  function terminalFailure(events) {
-    const lastReason = lastTurnEndKind(events)
-    if (lastReason === 'error') return true
-    if (lastReason === 'completed') return hasToolErrorInLastTurn(events)
-    return false
-  }
-
-  /** True when the last turn ended 'completed' and no turn is open. */
-  function completed(events) {
-    return lastTurnEndKind(events) === 'completed' && !hasOpenTurn(events)
-  }
-
-  /** True when a turn is open or a live agent drives the session. */
-  function agentRunning(events, live) {
-    if (live) return true
-    return hasOpenTurn(events)
-  }
-
-  /** Last turn/end reason.kind (null when none). */
-  function lastTurnEndKind(events) {
-    let kind = null
-    for (const e of events) {
-      if (e.type !== 'turn/end') continue
-      kind = e.data && e.data.reason && e.data.reason.kind ? String(e.data.reason.kind) : 'completed'
-    }
-    return kind
-  }
-
-  /** True when the LATEST turn contains a tool/result.error. */
-  function hasToolErrorInLastTurn(events) {
-    let inLast = false
-    let saw = false
-    for (const e of events) {
-      if (e.type === 'turn/start') { inLast = true; saw = false; continue }
-      if (e.type === 'turn/end') { inLast = false; continue }
-      if (!inLast) continue
-      if (e.type === 'tool/result' && ((e.data && e.data.error) || e.error)) saw = true
-    }
-    return saw
-  }
-
-  function hasOpenTurn(events) {
-    let open = false
-    for (const e of events) {
-      if (e.type === 'turn/start') open = true
-      else if (e.type === 'turn/end') open = false
-    }
-    return open
-  }
-
-  /** Count file-mutation tool calls (for STALE facts). */
-  function fileChangeCount(events) {
-    let n = 0
-    for (const e of events) {
-      if (e.type !== 'tool/call') continue
-      const name = String((e.data && e.data.name) || e.name || '')
-      if (/(^|\/)(write|edit)(_|$)/.test(name)) n += 1
-    }
-    return n
-  }
-
   /** Title from session/title event or readTitle(). */
   async function titleOf(sessionId, events) {
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i]
-      if (e.type === 'session/title' && e.data && e.data.title) return String(e.data.title)
-    }
+    const t = titleFromEvents(events)
+    if (t) return t
     const sq = ctx.get && ctx.get('sessionQuery')
     if (sq && typeof sq.readTitle === 'function') {
       try {
-        const t = await sq.readTitle(sessionId)
-        if (t && t.title) return String(t.title)
+        const r = await sq.readTitle(sessionId)
+        if (r && r.title) return String(r.title)
       } catch { /* fall through */ }
     }
     return ''
@@ -195,7 +231,13 @@ export function createPresenceService(ctx, opts = {}) {
       observedErrorCount: hb.errorCount,
     }, staleReasons)
     const prev = prevStates.get(id)
-    const finalState = transition(prev, state)
+    // design §21: DONE/FAILED only leave via a NEW task. Phase A has no task
+    // identity, so a freshly OPENED turn is the new-task signal: the agent is
+    // clearly working again (dogfood finding: a turn opened after a restart
+    // or a new user message must recover to RUNNING, not stay FAILED forever).
+    const finalState = (prev === STATE.DONE || prev === STATE.FAILED) && hasOpenTurn(events)
+      ? state
+      : transition(prev, state)
 
     const title = await titleOf(id, events)
     const summary = summarize(events, finalState)
@@ -227,16 +269,6 @@ export function createPresenceService(ctx, opts = {}) {
       }) : null,
     })
     return task
-  }
-
-  function firstTime(events) {
-    for (const e of events) if (e && Number(e.time)) return Number(e.time)
-    return 0
-  }
-  function lastTime(events) {
-    let t = 0
-    for (const e of events) if (e && Number(e.time)) t = Number(e.time)
-    return t
   }
 
   return {

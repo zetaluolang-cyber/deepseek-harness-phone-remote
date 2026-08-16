@@ -90,11 +90,14 @@ window.__ModuleLoader__.load({
 .remfs-card .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .remfs-open{background:transparent;border:1px solid rgba(74,108,247,.6);color:#7d97ff;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;flex:none}
 .remfs-open:hover{background:rgba(74,108,247,.15)}
-.remfs-orb{display:inline-flex;align-items:center;gap:5px;border:1px solid rgba(128,128,128,.35);border-radius:999px;background:rgba(20,20,24,.85);color:var(--dsw-alias-label-primary,#eee);font-size:12px;padding:4px 10px;cursor:pointer;user-select:none}
-.remfs-orb:hover{background:rgba(40,40,48,.9)}
-.remfs-orb .remfs-orb-icon{font-weight:700}
-.remfs-orb .remfs-orb-text{font-size:11px}
-.remfs-peek{position:fixed;right:16px;top:52px;z-index:130;width:min(320px,92vw);background:var(--dsw-specific-sidebar-fill,#202024);border:1px solid rgba(128,128,128,.3);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px;box-shadow:0 8px 28px rgba(0,0,0,.45)}
+/* Agent Presence floating ball (design §10-11): fixed over the page,
+   draggable, icon + text tag + accent ring — never color-only. */
+.remfs-orbwrap{position:fixed;right:16px;bottom:16px;z-index:1500;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none}
+.remfs-orbwrap.drag{cursor:grabbing}
+.remfs-orb{width:46px;height:46px;border-radius:50%;border:2px solid rgba(128,128,128,.5);background:rgba(20,20,24,.92);color:var(--dsw-alias-label-primary,#eee);font-size:18px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.45);transition:transform .12s}
+.remfs-orb:hover{transform:scale(1.06)}
+.remfs-orb-tag{font-size:10px;color:var(--dsw-alias-label-primary,#eee);background:rgba(20,20,24,.82);padding:1px 8px;border-radius:999px;pointer-events:none;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.remfs-peek{position:fixed;right:16px;bottom:76px;z-index:1510;width:min(320px,92vw);background:var(--dsw-specific-sidebar-fill,#202024);border:1px solid rgba(128,128,128,.3);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px;box-shadow:0 8px 28px rgba(0,0,0,.45)}
 .remfs-peek-state{font-size:13px;font-weight:700}
 .remfs-peek-title{font-size:13px}
 .remfs-peek-summary{font-size:12px;color:var(--dsw-alias-label-secondary,#999)}
@@ -619,11 +622,17 @@ window.__ModuleLoader__.load({
     // state from raw events. The pure logic lives in lib/presence/ui.js and is
     // unit-tested; this file only renders it.
 
+    // Floating ball: fixed over the page, draggable via pointer capture.
+    // Drag vs click: any pointer move beyond 4px counts as a drag and
+    // suppresses the click (peek toggle).
     function PresenceOrb({ conn, sessionsApi }) {
       const [tasks, setTasks] = React.useState([])
       const [peekOpen, setPeekOpen] = React.useState(false)
       const [notified, setNotified] = React.useState({}) // state-per-session notification dedup
       const [lastOrb, setLastOrb] = React.useState(null)
+      const [pos, setPos] = React.useState(null) // {x,y} after drag; null = default corner
+      const dragRef = React.useRef(null)
+      const draggedRef = React.useRef(false)
 
       const openSession = (id) => {
         try {
@@ -661,20 +670,62 @@ window.__ModuleLoader__.load({
         return () => { try { clearInterval(h) } catch { /* ignore */ } }
       }, [])
 
+      const onPointerDown = (e) => {
+        draggedRef.current = false
+        dragRef.current = { x: e.clientX, y: e.clientY }
+        try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+      }
+      const onPointerMove = (e) => {
+        const d = dragRef.current
+        if (!d) return
+        const dx = e.clientX - d.x
+        const dy = e.clientY - d.y
+        if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return
+        draggedRef.current = true
+        const rect = e.currentTarget.getBoundingClientRect()
+        const vw = (window.innerWidth || 0)
+        const vh = (window.innerHeight || 0)
+        const x = Math.min(Math.max(4, rect.left + dx), Math.max(4, vw - rect.width - 4))
+        const y = Math.min(Math.max(4, rect.top + dy), Math.max(4, vh - rect.height - 4))
+        setPos({ x, y })
+        d.x = e.clientX
+        d.y = e.clientY
+      }
+      const onPointerUp = () => {
+        dragRef.current = null
+      }
+
       const orb = orbStateLocal(lastOrb)
       const qp = quickPeekLocal(lastOrb)
+      const wrapStyle = pos ? { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' } : null
+      const peekStyle = pos
+        ? { left: Math.max(8, Math.min(pos.x - 160, (window.innerWidth || 0) - 328)), top: Math.max(8, pos.y - 230), right: 'auto', bottom: 'auto' }
+        : null
 
       return React.createElement(React.Fragment, null,
-        React.createElement('button', {
-          className: 'remfs-orb' + (peekOpen ? ' open' : ''),
-          title: t('orbTitle'),
-          onClick: () => setPeekOpen(!peekOpen),
+        React.createElement('div', {
+          className: 'remfs-orbwrap' + (draggedRef.current ? ' drag' : ''),
+          style: wrapStyle,
+          onPointerDown,
+          onPointerMove,
+          onPointerUp,
+          onPointerCancel: onPointerUp,
         },
-          React.createElement('span', { className: 'remfs-orb-icon' }, orb.icon),
-          React.createElement('span', { className: 'remfs-orb-text' }, orb.text)
+          React.createElement('button', {
+            className: 'remfs-orb',
+            title: t('orbTitle') + ': ' + orb.text + (orb.title ? ' — ' + orb.title : ''),
+            style: { borderColor: orb.color },
+            onClick: () => {
+              if (draggedRef.current) { draggedRef.current = false; return }
+              setPeekOpen(!peekOpen)
+            },
+          },
+            React.createElement('span', { className: 'remfs-orb-icon' }, orb.icon)
+          ),
+          React.createElement('span', { className: 'remfs-orb-tag' }, orb.text)
         ),
-        peekOpen ? React.createElement('div', { className: 'remfs-peek' },
-          React.createElement('div', { className: 'remfs-peek-state' }, qp.icon + ' ' + qp.text),
+        peekOpen ? React.createElement('div', { className: 'remfs-peek', style: peekStyle },
+          React.createElement('div', { className: 'remfs-peek-state', style: { color: orb.color } }, qp.icon + ' ' + qp.text),
           React.createElement('div', { className: 'remfs-peek-title' }, qp.title || t('orbNoTask')),
           qp.summary ? React.createElement('div', { className: 'remfs-peek-summary' }, qp.summary) : null,
           qp.staleReason && qp.staleReason.length > 0
@@ -1357,11 +1408,6 @@ window.__ModuleLoader__.load({
       ))
 
       ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register(
-        { name: 'conversation.session.header.utilities', id: 'remfs.presence.orb', order: 12, label: () => t('orbTitle') },
-        () => React.createElement(PresenceOrb, { conn, sessionsApi: window.__remfsSessionsApi })
-      ))
-
-      ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register(
         { name: 'conversation.session.header.utilities', id: 'remfs.header', order: 20, label: () => t('slotLabel') },
         () => React.createElement(WorkbenchToggle, null)
       ))
@@ -1379,6 +1425,11 @@ window.__ModuleLoader__.load({
       ctx.slots.inject('shell.overlay', () => ctx.slots.register(
         { name: 'shell.overlay', id: 'remfs.cockpit.panel' },
         () => React.createElement(CockpitOverlayBridge, { conn })
+      ))
+
+      ctx.slots.inject('shell.overlay', () => ctx.slots.register(
+        { name: 'shell.overlay', id: 'remfs.presence.orb' },
+        () => React.createElement(PresenceOrb, { conn, sessionsApi: window.__remfsSessionsApi })
       ))
 
       ctx.slots.inject('shell.overlay', () => ctx.slots.register(

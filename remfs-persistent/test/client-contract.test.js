@@ -138,6 +138,20 @@ test('client source: presence Orb consumes presence.tasks and opens via sessions
   assert.doesNotMatch(orbBlock, /fork\(|create\(/, 'Orb/Board must never create a replacement session')
 })
 
+test('client source: Orb is a floating ball - shell.overlay, fixed, draggable, icon+tag+accent', () => {
+  // design §10-11: ambient floating indicator over the page, not a header item
+  const overlaySection = CLIENT_SRC.slice(CLIENT_SRC.indexOf('shell.overlay'))
+  assert.match(overlaySection, /remfs\.presence\.orb/, 'Orb must register in shell.overlay (page-level, not header)')
+  const orbBlock = CLIENT_SRC.slice(CLIENT_SRC.indexOf('function PresenceOrb'))
+  assert.match(orbBlock, /remfs-orbwrap/, 'Orb must render a floating ball wrapper')
+  assert.match(orbBlock, /setPointerCapture/, 'Orb must be draggable via pointer capture')
+  assert.match(orbBlock, /onPointerMove/, 'drag must track pointer movement')
+  assert.match(orbBlock, /draggedRef\.current/, 'drag must be distinguishable from click')
+  assert.match(CLIENT_SRC, /\.remfs-orbwrap\{position:fixed/, 'ball CSS must float over the page')
+  assert.match(CLIENT_SRC, /remfs-orb-tag/, 'ball keeps a text tag (icon+text, never color-only)')
+  assert.match(orbBlock, /borderColor:\s*orb\.color/, 'ball accent ring must come from orbState.color')
+})
+
 test('client source: notification rules - NEEDS_USER/FAILED only, never RUNNING; click opens the session', () => {
   assert.match(CLIENT_SRC, /P_NOTIFY_DEFAULT/, 'client must define notification defaults')
   assert.match(CLIENT_SRC, /\[P_NEEDS\]:\s*true/, 'NEEDS_USER must notify')

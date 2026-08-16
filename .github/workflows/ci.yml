@@ -1,5 +1,5 @@
 # CI: lint (syntax), unit/security tests, deploy/ownership tests, packaging.
-# Kept deliberately light ??no heavyweight framework, just node:test + node --check.
+# Kept deliberately light — no heavyweight framework, just node:test + node --check.
 name: CI
 
 on:
@@ -20,10 +20,11 @@ jobs:
           for f in host.js client.js security.js dispatch.js cockpit/contract.js cockpit/classify.js cockpit/delta.js cockpit/away.js cockpit/service.js presence/contract.js presence/heartbeat.js presence/state.js presence/summary.js presence/service.js; do
             node --check "remfs-persistent/lib/$f"
           done
+          node --check remfs-persistent/scripts/dogfood-board.js
       - name: All node tests (explicit files, zero-test guard)
         run: |
           cd remfs-persistent
-          OUT=$(node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/cockpit.test.js test/presence.test.js test/presence-ui.test.js 2>&1)
+          OUT=$(node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/cockpit.test.js test/presence.test.js test/presence-ui.test.js test/dogfood.test.js 2>&1)
           echo "$OUT"
           COUNT=$(echo "$OUT" | grep -oP '[#ℹ] tests \K\d+' | head -1)
           echo "tests executed: ${COUNT:-0}"
@@ -67,7 +68,7 @@ jobs:
       - name: All node tests on Windows (explicit files, zero-test guard)
         run: |
           cd remfs-persistent
-          $OUT = node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/cockpit.test.js test/presence.test.js test/presence-ui.test.js 2>&1 | Out-String
+          $OUT = node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/cockpit.test.js test/presence.test.js test/presence-ui.test.js test/dogfood.test.js 2>&1 | Out-String
           Write-Host $OUT
           $m = [regex]::Match($OUT, '[#ℹ] tests (\d+)')
           $count = if ($m.Success) { [int]$m.Groups[1].Value } else { 0 }

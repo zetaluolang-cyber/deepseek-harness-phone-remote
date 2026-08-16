@@ -12,7 +12,9 @@ import {
 import { classifyProgress, foldHeartbeats, isSystemAlive, isProgressStale } from '../lib/presence/heartbeat.js'
 import { resolveState, transition } from '../lib/presence/state.js'
 import { summarize, staleReasonLines } from '../lib/presence/summary.js'
-import { createPresenceService } from '../lib/presence/service.js'
+import {
+  createPresenceService, terminalFailure, hasToolErrorInLastTurn, hasOpenTurn,
+} from '../lib/presence/service.js'
 
 const t0 = Date.UTC(2026, 7, 17, 0, 0, 0)
 const ev = (type, data, time = t0, seq = 0) => ({ seq, type, time, data })
@@ -115,6 +117,32 @@ test('presence transition: STALE + new progress -> RUNNING (recovery)', () => {
 test('presence transition: DONE/FAILED do not regress to RUNNING on same task', () => {
   assert.equal(transition(STATE.DONE, STATE.RUNNING), STATE.DONE)
   assert.equal(transition(STATE.FAILED, STATE.RUNNING), STATE.FAILED)
+})
+
+// Dogfood finding: a still-open turn must never be FAILED just because a tool
+// call inside it errored — the agent is working and may self-recover
+// (design §4.2: FAILED = stopped and cannot self-recover).
+
+test('presence failure: OPEN turn with a tool error is NOT FAILED (may recover)', () => {
+  const events = [turnStart(1, t0), toolOk('bash', '{}', t0 + 100), toolErr('pwsh', t0 + 200)]
+  assert.equal(hasOpenTurn(events), true)
+  assert.equal(hasToolErrorInLastTurn(events), false, 'open turn excluded from failure scan')
+  assert.equal(terminalFailure(events), false)
+})
+
+test('presence failure: CLOSED turn with a tool error -> FAILED', () => {
+  const events = [turnStart(1, t0), toolErr('bash', t0 + 100), turnEnd('completed', 1, t0 + 200)]
+  assert.equal(hasOpenTurn(events), false)
+  assert.equal(hasToolErrorInLastTurn(events), true)
+  assert.equal(terminalFailure(events), true)
+})
+
+test('presence failure: closed turn reason=error -> FAILED, new open turn recovers', () => {
+  const failed = [turnStart(1, t0), toolOk('bash', '{}', t0 + 100), turnEnd('error', 1, t0 + 200)]
+  assert.equal(terminalFailure(failed), true)
+  const recovered = [...failed, turnStart(2, t0 + 300), toolOk('edit', '{"p":"x"}', t0 + 400)]
+  assert.equal(terminalFailure(recovered), false, 'a new open turn means the agent works again')
+  assert.equal(hasToolErrorInLastTurn(recovered), false, 'only the last CLOSED turn is scanned')
 })
 
 // ------------------------------------------------------------ heartbeats
@@ -276,6 +304,46 @@ test('presence service: STALE with no progress + live heartbeat, then recovery t
   const svc2 = createPresenceService(ctx2, { staleMinutes: 20 })
   res = await svc2.tasks()
   assert.equal(res.value.tasks[0].state, STATE.RUNNING, 'fresh progress must recover STALE -> RUNNING')
+})
+
+// Dogfood finding: a tool error inside a still-open turn must not flip the
+// session to FAILED while the agent is working.
+
+test('presence service: open turn with tool error -> RUNNING (no false FAILED)', async () => {
+  const ctx = fakeCtx({
+    records: [{ id: 's1', header: { createdAt: t0 } }],
+    eventsBySession: {
+      's1': [turnStart(1, t0), toolOk('bash', '{}', t0 + 100), toolErr('pwsh', t0 + 200), turnStart(2, t0 + 300)],
+    },
+  })
+  const svc = createPresenceService(ctx, { staleMinutes: 20 })
+  const res = await svc.tasks()
+  assert.equal(res.value.tasks[0].state, STATE.RUNNING)
+})
+
+test('presence service: FAILED then a NEW turn opens -> RUNNING (new-task intent)', async () => {
+  const ctx1 = fakeCtx({
+    records: [{ id: 's1', header: { createdAt: t0 } }],
+    eventsBySession: {
+      's1': [turnStart(1, t0), toolOk('bash', '{}', t0 + 100), turnEnd('error', 1, t0 + 200)],
+    },
+  })
+  const svc1 = createPresenceService(ctx1, { staleMinutes: 20 })
+  let res = await svc1.tasks()
+  assert.equal(res.value.tasks[0].state, STATE.FAILED)
+  // user sends a new message -> new turn opens with fresh meaningful progress
+  const ctx2 = fakeCtx({
+    records: [{ id: 's1', header: { createdAt: t0 } }],
+    eventsBySession: {
+      's1': [
+        turnStart(1, t0), toolOk('bash', '{}', t0 + 100), turnEnd('error', 1, t0 + 200),
+        turnStart(2, t0 + 300), toolOk('edit', '{"p":"new.txt"}', t0 + 400),
+      ],
+    },
+  })
+  const svc2 = createPresenceService(ctx2, { staleMinutes: 20 })
+  res = await svc2.tasks()
+  assert.equal(res.value.tasks[0].state, STATE.RUNNING, 'a fresh open turn must leave FAILED')
 })
 
 // ------------------------------------------------------------ contract

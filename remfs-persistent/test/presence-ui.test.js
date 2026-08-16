@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { STATE, makeTaskDTO } from '../lib/presence/contract.js'
 import {
   orbState, quickPeek, groupTasks, boardCounts, shouldNotify,
-  normalizeNotifySettings, DEFAULT_NOTIFY, BOARD_GROUPS,
+  normalizeNotifySettings, DEFAULT_NOTIFY, BOARD_GROUPS, STATE_COLOR,
 } from '../lib/presence/ui.js'
 
 const t0 = Date.UTC(2026, 7, 17, 0, 0, 0)
@@ -37,6 +37,17 @@ test('orb: no task -> IDLE', () => {
   const o = orbState(null)
   assert.equal(o.state, STATE.IDLE)
   assert.equal(o.taskId, null)
+})
+
+test('orb: floating ball accent color exists per state, icon+text still primary', () => {
+  for (const s of Object.values(STATE)) {
+    assert.ok(STATE_COLOR[s], 'every state needs an accent color, got none for ' + s)
+    assert.match(STATE_COLOR[s], /^#[0-9a-fA-F]{6}$/, 'accent must be a hex color')
+    const o = orbState(task('y', s))
+    assert.equal(o.color, STATE_COLOR[s], 'orbState carries the accent color')
+    assert.ok(o.icon && o.text, 'icon+text remain the primary carriers (never color-only)')
+  }
+  assert.equal(orbState(null).color, STATE_COLOR[STATE.IDLE])
 })
 
 // ------------------------------------------------------------ quick peek

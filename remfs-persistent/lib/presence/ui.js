@@ -34,16 +34,34 @@ export function shouldNotify(prevState, nextState, settings) {
 }
 
 /**
+ * Orb accent color (design §11): a visual aid ONLY — shape/icon + text remain
+ * the primary state carriers, never color alone. Consumed by the floating
+ * ball's ring so the ball stays recognizable at a glance.
+ */
+export const STATE_COLOR = Object.freeze({
+  [STATE.IDLE]: '#8a8f98',
+  [STATE.RUNNING]: '#4a9df7',
+  [STATE.STALE]: '#ffb86b',
+  [STATE.NEEDS_USER]: '#e06c6c',
+  [STATE.FAILED]: '#d84545',
+  [STATE.DONE]: '#2e9e4f',
+  [STATE.DISCONNECTED]: '#6b7280',
+})
+
+/**
  * Orb state (design §11): shape/icon + text — never color-only.
  * @param {Object|null} task - highest-priority task DTO.
- * @returns {{ icon, text, state, taskId, title, summary }}
+ * @returns {{ icon, text, color, state, taskId, title, summary }}
  */
 export function orbState(task) {
-  if (!task) return { icon: '○', text: STATE_LABEL[STATE.IDLE].text, state: STATE.IDLE, taskId: null, title: '', summary: '' }
+  if (!task) {
+    return { icon: '○', text: STATE_LABEL[STATE.IDLE].text, color: STATE_COLOR[STATE.IDLE], state: STATE.IDLE, taskId: null, title: '', summary: '' }
+  }
   const label = STATE_LABEL[task.state] || STATE_LABEL[STATE.IDLE]
   return {
     icon: label.icon,
     text: label.text,
+    color: STATE_COLOR[task.state] || STATE_COLOR[STATE.IDLE],
     state: task.state,
     taskId: task.sessionId || task.taskId || null,
     title: task.title || '',
