@@ -21,10 +21,11 @@ jobs:
             node --check "remfs-persistent/lib/$f"
           done
           node --check remfs-persistent/scripts/dogfood-board.js
+          node --check remfs-persistent/scripts/dump-session.js
       - name: All node tests (explicit files, zero-test guard)
         run: |
           cd remfs-persistent
-          OUT=$(node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/cockpit.test.js test/presence.test.js test/presence-ui.test.js test/dogfood.test.js 2>&1)
+          OUT=$(node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/cockpit.test.js test/presence.test.js test/presence-ui.test.js test/dogfood.test.js test/dump-session.test.js 2>&1)
           echo "$OUT"
           COUNT=$(echo "$OUT" | grep -oP '[#ℹ] tests \K\d+' | head -1)
           echo "tests executed: ${COUNT:-0}"
@@ -68,7 +69,7 @@ jobs:
       - name: All node tests on Windows (explicit files, zero-test guard)
         run: |
           cd remfs-persistent
-          $OUT = node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/cockpit.test.js test/presence.test.js test/presence-ui.test.js test/dogfood.test.js 2>&1 | Out-String
+          $OUT = node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/cockpit.test.js test/presence.test.js test/presence-ui.test.js test/dogfood.test.js test/dump-session.test.js 2>&1 | Out-String
           Write-Host $OUT
           $m = [regex]::Match($OUT, '[#ℹ] tests (\d+)')
           $count = if ($m.Success) { [int]$m.Groups[1].Value } else { 0 }
