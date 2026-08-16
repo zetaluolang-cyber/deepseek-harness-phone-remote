@@ -126,6 +126,29 @@ test('client source: cockpit is an INDEPENDENT entry (header button opens the co
   assert.match(CLIENT_SRC, /WorkbenchToggle/, 'client keeps a separate workbench entry (Files/Sessions)')
 })
 
+// Agent Presence Phase B: Orb + Task Board + notifications consume ONLY the
+// presence DTOs (single source of truth, design §25); Open uses sessions.open.
+test('client source: presence Orb consumes presence.tasks and opens via sessions.open', () => {
+  assert.match(CLIENT_SRC, /presence\.tasks/, 'Orb must fetch the presence task snapshot')
+  assert.match(CLIENT_SRC, /PresenceOrb/, 'client must render the presence Orb')
+  assert.match(CLIENT_SRC, /PresenceBoard/, 'client must render the Task Board')
+  assert.match(CLIENT_SRC, /sessionsApi\.open\(|sessionsApi && typeof sessionsApi\.open/,
+    'Orb/Board Open must enter the EXISTING session via sessions.open')
+  const orbBlock = CLIENT_SRC.slice(CLIENT_SRC.indexOf('function PresenceOrb'))
+  assert.doesNotMatch(orbBlock, /fork\(|create\(/, 'Orb/Board must never create a replacement session')
+})
+
+test('client source: notification rules - NEEDS_USER/FAILED only, never RUNNING; click opens the session', () => {
+  assert.match(CLIENT_SRC, /P_NOTIFY_DEFAULT/, 'client must define notification defaults')
+  assert.match(CLIENT_SRC, /\[P_NEEDS\]:\s*true/, 'NEEDS_USER must notify')
+  assert.match(CLIENT_SRC, /\[P_FAILED\]:\s*true/, 'FAILED must notify')
+  assert.match(CLIENT_SRC, /\[P_RUNNING\]:\s*false/, 'RUNNING must never notify')
+  assert.match(CLIENT_SRC, /\[P_STALE\]:\s*false/, 'STALE must not interrupt by default')
+  assert.match(CLIENT_SRC, /new Notification\(/, 'client must use the Notification API')
+  assert.match(CLIENT_SRC, /sessionsApi\.open\(task\.sessionId\)|__remfsSessionsApi\.open\(task\.sessionId\)/,
+    'notification click must open the corresponding session directly')
+})
+
 test('client source: revoke sends targetDeviceId (never { id })', () => {
   assert.match(CLIENT_SRC, /rpc\('revoke',\s*\{\s*targetDeviceId:\s*id\s*\}/,
     'client must send { targetDeviceId } for revoke')

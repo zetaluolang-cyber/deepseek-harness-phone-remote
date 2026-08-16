@@ -90,6 +90,20 @@ window.__ModuleLoader__.load({
 .remfs-card .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .remfs-open{background:transparent;border:1px solid rgba(74,108,247,.6);color:#7d97ff;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;flex:none}
 .remfs-open:hover{background:rgba(74,108,247,.15)}
+.remfs-orb{display:inline-flex;align-items:center;gap:5px;border:1px solid rgba(128,128,128,.35);border-radius:999px;background:rgba(20,20,24,.85);color:var(--dsw-alias-label-primary,#eee);font-size:12px;padding:4px 10px;cursor:pointer;user-select:none}
+.remfs-orb:hover{background:rgba(40,40,48,.9)}
+.remfs-orb .remfs-orb-icon{font-weight:700}
+.remfs-orb .remfs-orb-text{font-size:11px}
+.remfs-peek{position:fixed;right:16px;top:52px;z-index:130;width:min(320px,92vw);background:var(--dsw-specific-sidebar-fill,#202024);border:1px solid rgba(128,128,128,.3);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px;box-shadow:0 8px 28px rgba(0,0,0,.45)}
+.remfs-peek-state{font-size:13px;font-weight:700}
+.remfs-peek-title{font-size:13px}
+.remfs-peek-summary{font-size:12px;color:var(--dsw-alias-label-secondary,#999)}
+.remfs-peek-reasons{font-size:11px;color:var(--dsw-alias-label-secondary,#999)}
+.remfs-peek-prog{font-size:11px;color:var(--dsw-alias-label-secondary,#999)}
+.remfs-peek-actions{display:flex;gap:8px;margin-top:4px}
+.remfs-board{max-height:86vh}
+.remfs-card.stalled{border-color:rgba(255,183,107,.5)}
+.remfs-card-stale{font-size:11px;color:#ffb86b}
 .remfs-hbtn{background:transparent;border:1px solid rgba(128,128,128,.3);border-radius:8px;color:inherit;font-size:13px;height:34px;padding:0 10px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
 .remfs-hbtn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.2))}
 .remfs-hbtn.open{border-color:#4a6cf7}
@@ -158,6 +172,11 @@ window.__ModuleLoader__.load({
         close: '✕ 关闭', loading: '加载中…',
         awayTitle: '离席状态', awaySince: '已离开', awayStart: '🎒 开始离席', awayStop: '✅ 我回来了',
         awayFor: '离开 {n}', notAway: '在线',
+        orbTitle: 'Agent 状态', orbTasks: '任务', orbOpen: '打开',
+        orbPeekTitle: '任务进展', orbLastProg: '上次推进', orbNoTask: '无任务',
+        boardTitle: 'Agent 任务', boardNeedsYou: '需要你', boardRunning: '运行中', boardNotStarted: '未开始', boardDone: '已完成', boardFailed: '失败',
+        boardStalled: '可能停滞', boardOpen: '打开', boardEmpty: '暂无任务',
+        notifNeedsYou: 'DeepSeek Harness 需要你', notifFailed: 'Agent 执行失败', notifDone: '任务完成',
         sinceCheck: '上次查看 {n} 前', sinceLeave: '你离开后 {n}',
         secNeedsYou: '🟠 需要你', secRunning: '🟢 运行中', secFinished: '✅ 已完成', secFailed: '🔴 失败', secIdle: '⚪ 空闲',
         ctaReview: '查看', ctaOpen: '打开', ctaCatchUp: '回顾', ctaInspect: '检查',
@@ -201,6 +220,11 @@ window.__ModuleLoader__.load({
         close: '✕ Close', loading: 'Loading…',
         awayTitle: 'Away status', awaySince: 'Away since', awayStart: '🎒 Start Away', awayStop: '✅ I\'m back',
         awayFor: 'Away {n}', notAway: 'Online',
+        orbTitle: 'Agent presence', orbTasks: 'Tasks', orbOpen: 'Open',
+        orbPeekTitle: 'Task progress', orbLastProg: 'Last progress', orbNoTask: 'No tasks',
+        boardTitle: 'Agent tasks', boardNeedsYou: 'Needs You', boardRunning: 'Running', boardNotStarted: 'Not Started', boardDone: 'Done', boardFailed: 'Failed',
+        boardStalled: 'Possibly stalled', boardOpen: 'Open', boardEmpty: 'No tasks',
+        notifNeedsYou: 'DeepSeek Harness needs you', notifFailed: 'Agent failed', notifDone: 'Task completed',
         sinceCheck: 'Last checked {n} ago', sinceLeave: 'Since you left · {n}',
         secNeedsYou: '🟠 Needs You', secRunning: '🟢 Running', secFinished: '✅ Finished', secFailed: '🔴 Failed', secIdle: '⚪ Idle',
         ctaReview: 'Review', ctaOpen: 'Open', ctaCatchUp: 'Catch up', ctaInspect: 'Inspect',
@@ -300,6 +324,83 @@ window.__ModuleLoader__.load({
     const pocketRpc = (conn, method, payload) => {
       const c = getCred()
       return conn.rpc.call('/pocket', method, Object.assign({}, payload, c || {}))
+    }
+
+    // ── Presence UI local helpers (mirror lib/presence/ui.js; the browser
+    // bundle cannot import the lib module). The pure logic is unit-tested in
+    // test/presence-ui.test.js against these EXACT rules.
+    const P_NEEDS = 'NEEDS_USER', P_FAILED = 'FAILED', P_STALE = 'STALE', P_RUNNING = 'RUNNING', P_DONE = 'DONE', P_IDLE = 'IDLE', P_DISC = 'DISCONNECTED'
+    const P_PRIORITY = { [P_NEEDS]: 0, [P_FAILED]: 1, [P_STALE]: 2, [P_RUNNING]: 3, [P_DONE]: 4, [P_IDLE]: 5, [P_DISC]: 6 }
+    const P_LABEL = { [P_IDLE]: { icon: '○', text: 'Idle' }, [P_RUNNING]: { icon: '●', text: 'Running' }, [P_STALE]: { icon: '◐', text: 'Possibly stalled' }, [P_NEEDS]: { icon: '!', text: 'Needs you' }, [P_FAILED]: { icon: '×', text: 'Failed' }, [P_DONE]: { icon: '✓', text: 'Done' }, [P_DISC]: { icon: '?', text: 'Disconnected' } }
+    const P_NOTIFY_DEFAULT = { [P_NEEDS]: true, [P_FAILED]: true, [P_DONE]: false, [P_STALE]: false, [P_RUNNING]: false, [P_IDLE]: false, [P_DISC]: false }
+
+    function highestPriorityTaskLocal(tasks) {
+      const list = Array.isArray(tasks) ? tasks : []
+      if (list.length === 0) return null
+      let best = null
+      for (const t of list) {
+        if (!t) continue
+        if (best === null || (P_PRIORITY[t.state] ?? 99) < (P_PRIORITY[best.state] ?? 99)) best = t
+      }
+      return best
+    }
+    function orbStateLocal(task) {
+      if (!task) return { icon: '○', text: P_LABEL[P_IDLE].text, state: P_IDLE, taskId: null, title: '', summary: '' }
+      const label = P_LABEL[task.state] || P_LABEL[P_IDLE]
+      return { icon: label.icon, text: label.text, state: task.state, taskId: task.sessionId || task.taskId || null, title: task.title || '', summary: task.summary || '' }
+    }
+    function quickPeekLocal(task) {
+      const orb = orbStateLocal(task)
+      const now = Date.now()
+      let lastProgressLabel = ''
+      if (task && task.progressHeartbeatAt) {
+        const p = Date.parse(task.progressHeartbeatAt)
+        if (Number.isFinite(p) && p > 0) {
+          const mins = Math.max(1, Math.floor((now - p) / 60000))
+          lastProgressLabel = mins < 60 ? mins + 'm ago' : Math.floor(mins / 60) + 'h ago'
+        }
+      }
+      return { state: orb.state, icon: orb.icon, text: orb.text, title: orb.title, summary: orb.summary, staleReason: (task && task.staleReason) || [], lastProgressLabel, taskId: orb.taskId }
+    }
+    function shouldNotifyLocal(state) { return P_NOTIFY_DEFAULT[state] === true }
+    function groupTasksLocal(tasks) {
+      const groups = { needsUser: [], running: [], notStarted: [], done: [], failed: [] }
+      for (const t of Array.isArray(tasks) ? tasks : []) {
+        let key = 'notStarted'
+        if (t.state === P_NEEDS) key = 'needsUser'
+        else if (t.state === P_RUNNING || t.state === P_STALE) key = 'running'
+        else if (t.state === P_DONE) key = 'done'
+        else if (t.state === P_FAILED) key = 'failed'
+        groups[key].push(t.state === P_STALE ? Object.assign({}, t, { stalled: true }) : t)
+      }
+      for (const k of Object.keys(groups)) {
+        groups[k].sort((a, b) => {
+          if (!!a.stalled !== !!b.stalled) return a.stalled ? -1 : 1
+          return (b.updatedAt || 0) - (a.updatedAt || 0)
+        })
+      }
+      return groups
+    }
+    function boardCountsLocal(groups) {
+      const out = {}
+      for (const k of Object.keys(groups || {})) out[k] = (groups[k] || []).length
+      return out
+    }
+    function firePresenceNotification(task) {
+      try {
+        if (typeof Notification !== 'function' || Notification.permission !== 'granted') return
+        const title = task.state === P_NEEDS ? t('notifNeedsYou') : task.state === P_FAILED ? t('notifFailed') : t('notifDone')
+        const body = (task.title || task.sessionId) + (task.summary ? ' — ' + task.summary : '')
+        const n = new Notification(title, { body, tag: 'remfs-presence-' + task.sessionId })
+        n.onclick = () => {
+          try { window.focus(); n.close() } catch { /* ignore */ }
+          try {
+            if (window.__remfsSessionsApi && typeof window.__remfsSessionsApi.open === 'function') {
+              window.__remfsSessionsApi.open(task.sessionId)
+            }
+          } catch { /* ignore */ }
+        }
+      } catch { /* notifications are best-effort */ }
     }
 
     const fmtAway = (sinceIso, nowIso) => {
@@ -511,6 +612,163 @@ window.__ModuleLoader__.load({
 
       return React.createElement('div', { className: 'remfs-body' }, body)
     }
+
+    // ── Agent Presence (Phase B): Orb + Task Board + notifications ─────────
+    // All UI consumes ONLY the presence task DTOs (single source of truth,
+    // design §25). Orb / Quick Peek / Board / notification never re-derive
+    // state from raw events. The pure logic lives in lib/presence/ui.js and is
+    // unit-tested; this file only renders it.
+
+    function PresenceOrb({ conn, sessionsApi }) {
+      const [tasks, setTasks] = React.useState([])
+      const [peekOpen, setPeekOpen] = React.useState(false)
+      const [notified, setNotified] = React.useState({}) // state-per-session notification dedup
+      const [lastOrb, setLastOrb] = React.useState(null)
+
+      const openSession = (id) => {
+        try {
+          if (sessionsApi && typeof sessionsApi.open === 'function') { sessionsApi.open(id) }
+        } catch { /* ignore */ }
+      }
+
+      const refresh = () => {
+        pocketRpc(conn, 'presence.tasks', {}).then((r) => {
+          if (!(r && r.ok)) return
+          const list = (r.value && r.value.tasks) || []
+          setTasks(list)
+          // notification rules (design §14): NEEDS_USER/FAILED always; DONE
+          // off by default; never RUNNING/STALE. Dedup per session+state.
+          const seen = {}
+          for (const task of list) {
+            const key = task.sessionId + ':' + task.state
+            if (shouldNotifyLocal(task.state) && !notified[key]) {
+              seen[key] = true
+              firePresenceNotification(task)
+            }
+          }
+          if (Object.keys(seen).length > 0) {
+            setNotified((prev) => Object.assign({}, prev, seen))
+          }
+          const orb = highestPriorityTaskLocal(list)
+          setLastOrb(orb)
+        }).catch(() => { /* orb stays as-is on transient errors */ })
+      }
+
+      React.useEffect(() => { refresh() }, [])
+      React.useEffect(() => {
+        // design §39: no aggressive polling; 8s is enough for Phase B proof.
+        const h = setInterval(refresh, 8000)
+        return () => { try { clearInterval(h) } catch { /* ignore */ } }
+      }, [])
+
+      const orb = orbStateLocal(lastOrb)
+      const qp = quickPeekLocal(lastOrb)
+
+      return React.createElement(React.Fragment, null,
+        React.createElement('button', {
+          className: 'remfs-orb' + (peekOpen ? ' open' : ''),
+          title: t('orbTitle'),
+          onClick: () => setPeekOpen(!peekOpen),
+        },
+          React.createElement('span', { className: 'remfs-orb-icon' }, orb.icon),
+          React.createElement('span', { className: 'remfs-orb-text' }, orb.text)
+        ),
+        peekOpen ? React.createElement('div', { className: 'remfs-peek' },
+          React.createElement('div', { className: 'remfs-peek-state' }, qp.icon + ' ' + qp.text),
+          React.createElement('div', { className: 'remfs-peek-title' }, qp.title || t('orbNoTask')),
+          qp.summary ? React.createElement('div', { className: 'remfs-peek-summary' }, qp.summary) : null,
+          qp.staleReason && qp.staleReason.length > 0
+            ? React.createElement('div', { className: 'remfs-peek-reasons' }, qp.staleReason.map((r, i) => React.createElement('div', { key: i }, '· ' + r)))
+            : null,
+          qp.lastProgressLabel ? React.createElement('div', { className: 'remfs-peek-prog' }, t('orbLastProg') + ' · ' + qp.lastProgressLabel) : null,
+          React.createElement('div', { className: 'remfs-peek-actions' },
+            React.createElement('button', { className: 'remfs-btn', onClick: () => { setPeekOpen(false); openBoard() } }, t('orbTasks')),
+            React.createElement('button', { className: 'remfs-btn primary', disabled: !qp.taskId, onClick: () => { if (qp.taskId) openSession(qp.taskId); setPeekOpen(false) } }, t('orbOpen'))
+          )
+        ) : null
+      )
+    }
+
+    function PresenceBoard({ conn, sessionsApi, onClose }) {
+      const [tasks, setTasks] = React.useState([])
+      const [loading, setLoading] = React.useState(true)
+      const [err, setErr] = React.useState(null)
+
+      const refresh = () => {
+        pocketRpc(conn, 'presence.tasks', {}).then((r) => {
+          if (r && r.ok) { setTasks((r.value && r.value.tasks) || []); setErr(null) }
+          else if (r && !r.ok) setErr(t('cockpitLoadFail'))
+          setLoading(false)
+        }).catch(() => { setLoading(false); setErr(t('cockpitLoadFail')) })
+      }
+      React.useEffect(() => { refresh() }, [])
+
+      const openSession = (id) => {
+        try {
+          if (sessionsApi && typeof sessionsApi.open === 'function') { sessionsApi.open(id); if (onClose) onClose() }
+        } catch { /* ignore */ }
+      }
+
+      const groups = groupTasksLocal(tasks)
+      const counts = boardCountsLocal(groups)
+
+      const groupRow = (key, labelKey) => {
+        const items = groups[key] || []
+        if (items.length === 0) return null
+        return React.createElement('div', { key },
+          React.createElement('div', { className: 'remfs-sec' }, t(labelKey) + ' (' + items.length + ')'),
+          items.map((task) => React.createElement('div', { key: task.sessionId, className: 'remfs-card' + (task.stalled ? ' stalled' : '') },
+            React.createElement('div', { className: 'row' },
+              React.createElement('div', { className: 'tt' }, (task.stalled ? '◐ ' : '') + (task.title || task.sessionId)),
+              React.createElement('button', { className: 'remfs-open', onClick: () => openSession(task.sessionId) }, t('boardOpen'))
+            ),
+            task.summary ? React.createElement('div', { className: 'la' }, task.summary) : null,
+            task.staleReason && task.staleReason.length > 0
+              ? React.createElement('div', { className: 'remfs-card-stale' }, task.staleReason[0])
+              : null
+          ))
+        )
+      }
+
+      const body = err ? React.createElement('div', { className: 'remfs-err' }, err)
+        : loading ? React.createElement('div', { className: 'remfs-row' }, t('loading'))
+        : React.createElement('div', { className: 'remfs-body' },
+            groupRow('needsUser', 'boardNeedsYou'),
+            groupRow('running', 'boardRunning'),
+            groupRow('notStarted', 'boardNotStarted'),
+            groupRow('done', 'boardDone'),
+            groupRow('failed', 'boardFailed'),
+            tasks.length === 0 ? React.createElement('div', { className: 'remfs-sec' }, t('boardEmpty')) : null
+          )
+
+      return React.createElement('div', { className: 'remfs-panel remfs-board' },
+        React.createElement('div', { className: 'remfs-head' },
+          React.createElement('b', null, t('boardTitle')),
+          React.createElement('span', { className: 'p' }, counts.needsYou + ' need · ' + counts.running + ' run'),
+          React.createElement('button', { className: 'remfs-btn remfs-close', onClick: onClose }, t('close'))
+        ),
+        body
+      )
+    }
+
+    // Board overlay state: opened from the Orb Quick Peek [Tasks] action.
+    let boardOpen = false
+    const boardListeners = new Set()
+    const setBoardOpen = (v) => { boardOpen = v; boardListeners.forEach((fn) => fn()) }
+    const subscribeBoard = (fn) => { boardListeners.add(fn); return () => boardListeners.delete(fn) }
+
+    function PresenceBoardOverlay({ conn }) {
+      const [, force] = React.useState(0)
+      React.useEffect(() => subscribeBoard(() => force((n) => n + 1)), [])
+      if (!boardOpen) return null
+      return React.createElement(React.Fragment, null,
+        React.createElement('div', { className: 'remfs-backdrop', onClick: () => setBoardOpen(false) }),
+        React.createElement(PresenceBoard, { conn, sessionsApi: window.__remfsSessionsApi, onClose: () => setBoardOpen(false) })
+      )
+    }
+
+    // Expose board-open to the Orb Quick Peek [Tasks] button.
+    const openBoard = () => setBoardOpen(true)
 
     function Workbench({ embedded, onClose, conn }) {
       const [tab, setTab] = React.useState('cockpit')
@@ -1099,6 +1357,11 @@ window.__ModuleLoader__.load({
       ))
 
       ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register(
+        { name: 'conversation.session.header.utilities', id: 'remfs.presence.orb', order: 12, label: () => t('orbTitle') },
+        () => React.createElement(PresenceOrb, { conn, sessionsApi: window.__remfsSessionsApi })
+      ))
+
+      ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register(
         { name: 'conversation.session.header.utilities', id: 'remfs.header', order: 20, label: () => t('slotLabel') },
         () => React.createElement(WorkbenchToggle, null)
       ))
@@ -1116,6 +1379,11 @@ window.__ModuleLoader__.load({
       ctx.slots.inject('shell.overlay', () => ctx.slots.register(
         { name: 'shell.overlay', id: 'remfs.cockpit.panel' },
         () => React.createElement(CockpitOverlayBridge, { conn })
+      ))
+
+      ctx.slots.inject('shell.overlay', () => ctx.slots.register(
+        { name: 'shell.overlay', id: 'remfs.presence.board' },
+        () => React.createElement(PresenceBoardOverlay, { conn })
       ))
     }
 
