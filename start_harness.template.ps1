@@ -207,18 +207,29 @@ if ($ready -and -not $keepAwakeAlive -and (Test-Path $keepAwakeBin)) {
         -RedirectStandardError $kErr | Out-Null
 }
 
-Start-Process $url
+# Unattended restarts (DSH_HEADLESS=1, set by restart_harness_once.ps1) never
+# open a browser or a modal dialog: a stuck "Open with" chooser or MessageBox
+# would block the restart chain itself (Task Scheduler waits for the script).
+if ($env:DSH_HEADLESS -eq "1") {
+    Write-Host "Headless mode: UI is at $url (browser not opened)"
+} else {
+    Start-Process $url
+}
 
 if ($lanIP) {
     Write-Host "Walk-on-LAN (same Wi-Fi): http://$lanIP`:3080"
 }
 
 if (-not $ready) {
-    Add-Type -AssemblyName System.Windows.Forms
-    $detail = ""
-    if (Test-Path $errLog) { $detail = (Get-Content $errLog -Tail 5 -ErrorAction SilentlyContinue) -join "`n" }
-    [System.Windows.Forms.MessageBox]::Show(
-        "Harness did not become ready.`nLogs: $logDir`n`n$detail",
-        "DeepSeek Harness"
-    )
+    if ($env:DSH_HEADLESS -eq "1") {
+        Write-Host "WARNING: harness did not become ready (headless; logs in $logDir)"
+    } else {
+        Add-Type -AssemblyName System.Windows.Forms
+        $detail = ""
+        if (Test-Path $errLog) { $detail = (Get-Content $errLog -Tail 5 -ErrorAction SilentlyContinue) -join "`n" }
+        [System.Windows.Forms.MessageBox]::Show(
+            "Harness did not become ready.`nLogs: $logDir`n`n$detail",
+            "DeepSeek Harness"
+        )
+    }
 }
