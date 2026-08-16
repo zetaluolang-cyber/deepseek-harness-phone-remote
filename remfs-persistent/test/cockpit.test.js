@@ -47,6 +47,34 @@ test('cockpit classify: failed session -> FAILED (last turn error)', () => {
   assert.equal(classifySession(events), STATUS.FAILED)
 })
 
+// Real-data finding (demo FAILED task): DSH does NOT end a turn with
+// reason.kind='error' when a TOOL fails - the turn completes normally but
+// carries a tool/result.error. A session whose recent turn had a tool
+// execution failure is FAILED, not FINISHED (C-老师 design §5.4: "真正发生
+// 执行失败").
+test('cockpit classify: tool execution failure -> FAILED even when the turn completed', () => {
+  // tool/result.error inside a completed turn = real execution failure
+  const withToolError = [
+    turnStart(1),
+    toolCall('bash', '{"command":"doit"}'),
+    { ...ev('tool/result', { error: { name: 'RuntimeException', code: '1' } }, t0 + 200) },
+    turnEnd('completed', 1, t0 + 300),
+  ]
+  assert.equal(classifySession(withToolError), STATUS.FAILED)
+  // a later successful turn that fixed the failure -> FINISHED (failure resolved)
+  const resolvedAfter = [
+    turnStart(1),
+    toolCall('bash', '{"command":"doit"}'),
+    { ...ev('tool/result', { error: { name: 'RuntimeException', code: '1' } }, t0 + 200) },
+    turnEnd('completed', 1, t0 + 300),
+    turnStart(2, t0 + 400),
+    toolCall('bash', '{"command":"doit"}'),
+    { ...ev('tool/result', { message: { role: 'tool', content: 'ok' } }, t0 + 500) },
+    turnEnd('completed', 2, t0 + 600),
+  ]
+  assert.equal(classifySession(resolvedAfter), STATUS.FINISHED)
+})
+
 test('cockpit classify: pending approval -> NEEDS_ATTENTION (highest priority)', () => {
   // asked without decided = blocked
   const blocked = [turnStart(1), approvalAsked('a1'), toolCall('bash')]

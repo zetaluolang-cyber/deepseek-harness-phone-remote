@@ -56,8 +56,36 @@ export function classifySession(events, hints = {}) {
 
   const lastEndReason = lastTurnEndReason(list)
   if (lastEndReason === 'error') return STATUS.FAILED
+  if (lastEndReason === 'completed' && lastTurnHasToolError(list)) return STATUS.FAILED
   if (lastEndReason === 'completed') return STATUS.FINISHED
   return STATUS.IDLE
+}
+
+/** True when the LATEST completed turn contained a tool execution failure
+ *  (tool/result.error). Real DSH data shows tool failures do NOT end the turn
+ *  with reason.kind='error' — the turn completes normally while carrying the
+ *  error, so "execution actually failed" must also check tool results
+ *  (C-老师 design §5.4). A later successful turn means the failure was
+ *  resolved and the session is FINISHED, not FAILED. */
+export function lastTurnHasToolError(events) {
+  let inLastTurn = false
+  let sawToolError = false
+  for (const e of events) {
+    if (e.type === TURN_START) {
+      inLastTurn = true
+      sawToolError = false
+      continue
+    }
+    if (e.type === TURN_END) {
+      inLastTurn = false
+      continue
+    }
+    if (!inLastTurn) continue
+    if (e.type === 'tool/result' && ((e.data && e.data.error) || e.error)) {
+      sawToolError = true
+    }
+  }
+  return sawToolError
 }
 
 /** True when an `approval/asked` exists without a matching `approval/decided`. */
