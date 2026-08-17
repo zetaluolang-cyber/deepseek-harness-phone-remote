@@ -134,10 +134,14 @@ export function buildTasks(sessions, opts = {}) {
   const now = opts.now != null ? opts.now : Date.now()
   const staleMs = normalizeStaleMs(opts.staleMinutes)
   const live = new Set(opts.liveIds || [])
-  const seen = new Map()
+  // per-session dedup maps (see service.js: identical tool calls in DIFFERENT
+  // sessions are independent progress)
+  const seenBySession = new Map()
   const tasks = []
   for (const s of sessions) {
     const events = s.events || []
+    let seen = seenBySession.get(s.sessionId)
+    if (!seen) { seen = new Map(); seenBySession.set(s.sessionId, seen) }
     const hb = foldHeartbeats(events, { now, seen })
     const pending = hasPendingApproval(events)
     const failed = terminalFailure(events)

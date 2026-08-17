@@ -351,6 +351,37 @@ test('presence service: FAILED then a NEW turn opens -> RUNNING (new-task intent
   assert.equal(res.value.tasks[0].state, STATE.RUNNING, 'a fresh open turn must leave FAILED')
 })
 
+test('presence service: identical tool calls in DIFFERENT sessions are independent progress', async () => {
+  // dogfood finding: the dedup seen-map was shared across sessions, so the
+  // second session running the SAME tool call was suppressed -> STALE.
+  const ctx = fakeCtx({
+    records: [
+      { id: 's1', header: { createdAt: t0 } },
+      { id: 's2', header: { createdAt: t0 } },
+    ],
+    eventsBySession: {
+      // byte-identical tool call (same name + args) in BOTH sessions
+      's1': [turnStart(1, t0), toolOk('bash', '{"command":"x"}', t0 + 100)],
+      's2': [turnStart(1, t0), toolOk('bash', '{"command":"x"}', t0 + 100)],
+    },
+  })
+  const svc = createPresenceService(ctx, { staleMinutes: 20 })
+  const res = await svc.tasks()
+  const byId = Object.fromEntries(res.value.tasks.map((t) => [t.sessionId, t]))
+  assert.equal(byId['s1'].state, STATE.RUNNING)
+  assert.equal(byId['s2'].state, STATE.RUNNING, 's2 progress must not be suppressed by s1')
+  // and a repeat WITHIN the same session is still suppressed
+  const ctx2 = fakeCtx({
+    records: [{ id: 's1', header: { createdAt: t0 } }],
+    eventsBySession: {
+      's1': [turnStart(1, t0), toolOk('bash', '{"command":"x"}', t0 + 100), toolOk('bash', '{"command":"x"}', t0 + 200)],
+    },
+  })
+  const svc2 = createPresenceService(ctx2, { staleMinutes: 20 })
+  const res2 = await svc2.tasks()
+  assert.equal(res2.value.tasks[0].state, STATE.RUNNING)
+})
+
 // ------------------------------------------------------------ contract
 
 test('presence contract: DTO defaults and stale threshold normalization', () => {

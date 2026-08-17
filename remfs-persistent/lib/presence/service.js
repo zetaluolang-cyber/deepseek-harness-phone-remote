@@ -155,7 +155,10 @@ export function createPresenceService(ctx, opts = {}) {
   const staleMs = normalizeStaleMs(opts.staleMinutes)
   // seen-map persists across reconciles so repeated events across calls are
   // suppressed from progress (design §6: duplicate does not advance).
-  const seen = new Map()
+  // Per-SESSION maps: an identical tool call in a DIFFERENT session is
+  // independent progress (dogfood finding: a shared map suppressed the
+  // second session's identical call and misjudged it STALE).
+  const seenBySession = new Map()
 
   /** Lightweight event records for one session (fail-closed). */
   async function sessionEvents(sessionId) {
@@ -213,6 +216,8 @@ export function createPresenceService(ctx, opts = {}) {
     const id = String(record.id || record.sessionId || '')
     if (!id) return null
     const events = await sessionEvents(id)
+    let seen = seenBySession.get(id)
+    if (!seen) { seen = new Map(); seenBySession.set(id, seen) }
     const hb = foldHeartbeats(events, { now, seen })
     const pending = hasPendingApproval(events)
     const failed = terminalFailure(events)
