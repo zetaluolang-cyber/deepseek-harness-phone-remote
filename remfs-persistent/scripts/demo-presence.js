@@ -28,6 +28,13 @@ function sessionLog(header, events) {
   return Buffer.concat([frame([JSON.stringify(header)]), frame(events.map((e) => JSON.stringify(e)))])
 }
 
+// DSH parses persisted headers strictly: version/cwd/delegationDepth/
+// agentPreset are required — a header missing them is skipped by
+// persistence.listSnapshots, so the demo never reaches the session index.
+function demoHeader(id, createdAt) {
+  return { type: 'session', version: 0, id, createdAt, cwd: process.cwd(), delegationDepth: 0, agentPreset: 'standard' }
+}
+
 const ev = (type, data, time) => ({ seq: 0, type, time, data })
 
 function buildSessions() {
@@ -37,7 +44,7 @@ function buildSessions() {
     {
       id: 'demo-presence-running',
       log: sessionLog(
-        { type: 'session', id: 'demo-presence-running', createdAt: now - 2 * min },
+        demoHeader('demo-presence-running', now - 2 * min),
         [
           ev('turn/start', { turn: 1 }, now - 2 * min),
           ev('tool/result', { name: 'bash', message: { role: 'tool', content: 'ok' } }, now - 20000),
@@ -48,7 +55,7 @@ function buildSessions() {
     {
       id: 'demo-presence-failed',
       log: sessionLog(
-        { type: 'session', id: 'demo-presence-failed', createdAt: now - 12 * min },
+        demoHeader('demo-presence-failed', now - 12 * min),
         [
           ev('turn/start', { turn: 1 }, now - 12 * min),
           ev('tool/result', { name: 'bash', message: { role: 'tool', content: 'ok' } }, now - 11 * min),
@@ -62,7 +69,7 @@ function buildSessions() {
     {
       id: 'demo-presence-disconnected',
       log: sessionLog(
-        { type: 'session', id: 'demo-presence-disconnected', createdAt: now - 6 * min },
+        demoHeader('demo-presence-disconnected', now - 6 * min),
         [
           ev('turn/start', { turn: 1 }, now - 6 * min),
           ev('tool/result', { name: 'bash', message: { role: 'tool', content: 'ok' } }, now - 5 * min),
