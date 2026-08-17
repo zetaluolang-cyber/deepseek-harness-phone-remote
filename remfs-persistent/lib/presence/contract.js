@@ -117,6 +117,9 @@ export const PRESENCE_OPS = Object.freeze({
  * @property {number} updatedAt
  * @property {Object|null} attention — { kind, summary } when NEEDS_USER
  * @property {Object|null} staleReason — explainable facts when STALE (§42)
+ * @property {number} sizeBytes — persisted session dir size on disk (0 when
+ *   the host cannot measure it); clients show it and suggest archiving
+ *   sessions above 10 MB
  */
 
 /** Build a presence task DTO with stable defaults. */
@@ -135,6 +138,7 @@ export function makeTaskDTO(parts) {
     updatedAt: Number(p.updatedAt) || 0,
     attention: p.attention || null,
     staleReason: p.staleReason || null,
+    sizeBytes: Number(p.sizeBytes) || 0,
   }
 }
 

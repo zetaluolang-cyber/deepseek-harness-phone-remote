@@ -110,6 +110,7 @@ STALE 是**可解释的观察事实**,不断言死锁;理由在 `staleReason` �
 | `updatedAt` | number | ms 时间戳 |
 | `attention` | object \| null | NEEDS_USER 时 `{ kind, summary }` |
 | `staleReason` | string[] \| null | STALE 时的可解释事实列表 |
+| `sizeBytes` | number | 持久化会话目录在磁盘上的大小(字节;host 无法测量时为 0)。客户端据此展示大小,超过 10MB 提示"建议归档" |
 
 示例:
 
@@ -129,7 +130,8 @@ STALE 是**可解释的观察事实**,不断言死锁;理由在 `staleReason` �
   "staleReason": [
     "no meaningful progress for 25m",
     "the same failure has repeated 3 times"
-  ]
+  ],
+  "sizeBytes": 4730000
 }
 ```
 

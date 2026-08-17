@@ -355,3 +355,43 @@ function Disable-OwnedServe {
     Start-Sleep -Milliseconds 800
     return (-not (Test-OwnedServeMapping -TsCli $cli))
 }
+
+# Quarantine corrupt demo session folders (e.g. "demo-presence-*" left by
+# phone-side presence demos). dsh's workspace plugin VALIDATES every session
+# log at startup and aborts the whole plugin tree on the first corrupt one, so
+# a stray demo session bricks the launcher. The scan is RECURSIVE: observed
+# corrupt artifacts also appear nested inside a stray workspace-key directory
+# (e.g. sessions\<ws>\--C-Users-...--\demo-presence-*), so any descendant
+# matching demo/presence OR a nested workspace-key directory is quarantined.
+# Folders are MOVED aside (never deleted) before the harness starts.
+# Returns the relative paths of what was moved.
+function Quarantine-DemoSessions {
+    param(
+        [string]$SessionsRoot = (Join-Path $env:USERPROFILE ".dsh\sessions"),
+        [string]$QuarantineRoot = (Join-Path $env:USERPROFILE ".dsh\sessions-quarantine")
+    )
+    $moved = @()
+    if (-not (Test-Path $SessionsRoot)) { return $moved }
+    $workspaces = Get-ChildItem -LiteralPath $SessionsRoot -Directory -ErrorAction SilentlyContinue
+    foreach ($ws in $workspaces) {
+        $suspects = Get-ChildItem -LiteralPath $ws.FullName -Directory -Recurse -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -match '^(demo|presence)-' -or
+                $_.Name -match '-presence-' -or
+                $_.Name -match '^--.*--$'
+            } |
+            Sort-Object { $_.FullName.Length }
+        foreach ($sd in $suspects) {
+            if (-not (Test-Path $sd.FullName)) { continue }
+            $destDir = Join-Path $QuarantineRoot $ws.Name
+            New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+            $dest = Join-Path $destDir $sd.Name
+            if (Test-Path $dest) {
+                $dest = Join-Path $destDir ($sd.Name + '-' + (Get-Date -Format 'yyyyMMdd_HHmmss'))
+            }
+            Move-Item -LiteralPath $sd.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
+            if (Test-Path $dest) { $moved += $sd.FullName.Substring($ws.FullName.Length + 1) }
+        }
+    }
+    return $moved
+}

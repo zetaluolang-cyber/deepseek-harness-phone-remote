@@ -65,6 +65,7 @@ export function validateTaskDTO(dto) {
     problems.push('attention: null or { kind, summary }')
   }
   if (dto.staleReason !== null && !Array.isArray(dto.staleReason)) problems.push('staleReason: null or string[]')
+  if (!num(dto.sizeBytes) || dto.sizeBytes < 0) problems.push('sizeBytes: non-negative finite number')
   return problems
 }
 

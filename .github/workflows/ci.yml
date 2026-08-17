@@ -26,7 +26,7 @@ jobs:
       - name: All node tests (explicit files, zero-test guard)
         run: |
           cd remfs-persistent
-          OUT=$(node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/presence.test.js test/presence-ui.test.js test/presence-api.test.js test/dogfood.test.js test/dump-session.test.js 2>&1)
+          OUT=$(node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/presence.test.js test/presence-ui.test.js test/presence-api.test.js test/dogfood.test.js test/dump-session.test.js test/demo-presence.test.js 2>&1)
           echo "$OUT"
           COUNT=$(echo "$OUT" | grep -oP '[#ℹ] tests \K\d+' | head -1)
           echo "tests executed: ${COUNT:-0}"
@@ -37,7 +37,7 @@ jobs:
       - name: No maintainer-specific paths in deploy scripts
         shell: pwsh
         run: |
-          $files = @('install.ps1', 'keep_awake.ps1', 'restart_harness.ps1', 'restart_harness_once.ps1', 'stop_harness.ps1', 'start_harness.template.ps1', 'harness-common.ps1', 'refresh_pairing.ps1', 'test/installer-patch.integration.ps1')
+          $files = @('install.ps1', 'keep_awake.ps1', 'restart_harness.ps1', 'restart_harness_once.ps1', 'stop_harness.ps1', 'start_harness.template.ps1', 'harness-common.ps1', 'refresh_pairing.ps1', 'watchdog.ps1', 'test/installer-patch.integration.ps1')
           $bad = @()
           foreach ($f in $files) {
             $hits = Select-String -Path $f -Pattern 'C:\\Users\\[A-Za-z]' -ErrorAction SilentlyContinue
@@ -47,7 +47,7 @@ jobs:
       - name: PowerShell syntax check (deploy scripts)
         shell: pwsh
         run: |
-          $files = @('install.ps1', 'keep_awake.ps1', 'restart_harness.ps1', 'restart_harness_once.ps1', 'stop_harness.ps1', 'start_harness.template.ps1', 'harness-common.ps1', 'refresh_pairing.ps1', 'test/install-smoke.ps1', 'test/launcher-ownership.ps1', 'test/installer-patch.integration.ps1')
+          $files = @('install.ps1', 'keep_awake.ps1', 'restart_harness.ps1', 'restart_harness_once.ps1', 'stop_harness.ps1', 'start_harness.template.ps1', 'harness-common.ps1', 'refresh_pairing.ps1', 'watchdog.ps1', 'test/install-smoke.ps1', 'test/launcher-ownership.ps1', 'test/installer-patch.integration.ps1')
           foreach ($f in $files) {
             $errs = $null
             [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$errs) | Out-Null
@@ -70,7 +70,7 @@ jobs:
       - name: All node tests on Windows (explicit files, zero-test guard)
         run: |
           cd remfs-persistent
-          $OUT = node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/presence.test.js test/presence-ui.test.js test/presence-api.test.js test/dogfood.test.js test/dump-session.test.js 2>&1 | Out-String
+          $OUT = node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/presence.test.js test/presence-ui.test.js test/presence-api.test.js test/dogfood.test.js test/dump-session.test.js test/demo-presence.test.js 2>&1 | Out-String
           Write-Host $OUT
           $m = [regex]::Match($OUT, '[#ℹ] tests (\d+)')
           $count = if ($m.Success) { [int]$m.Groups[1].Value } else { 0 }

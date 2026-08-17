@@ -12,7 +12,7 @@ import { ensurePairingCode, rotatePairingCode, verifyDevice } from './security.j
 import { createDispatcher } from './dispatch.js'
 import { createPresenceService } from './presence/service.js'
 import { PRESENCE_OPS } from './presence/contract.js'
-import { access, unlink } from 'node:fs/promises'
+import { access, readdir, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 
@@ -115,12 +115,67 @@ export default {
 
     conn.rpc.handle('/remfs', handler, { authority: 'trusted-host' })
 
+    // ── Session size probe (for the size hints in the phone UI) ────────────
+    // The persisted sessions live under ~/.dsh/sessions/<workspace-key>/<id>/
+    // (the workspace-key encoding is internal to DSH, so we FIND each session
+    // dir by its id instead of reimplementing the encoding). Results are
+    // TTL-cached (30s) so the 8s presence poll never re-walks the tree every
+    // cycle. Fail-closed: any error yields an empty map (UI shows no sizes).
+    const SESSIONS_ROOT = path.join(os.homedir(), '.dsh', 'sessions')
+    const SESSION_DIR_RE = /^session-[0-9a-fA-F-]{8,}$/
+    const SIZES_TTL_MS = 30 * 1000
+    let sizesCache = { at: 0, map: null }
+
+    async function scanSessionSizes() {
+      const now = Date.now()
+      if (sizesCache.map && now - sizesCache.at < SIZES_TTL_MS) return sizesCache.map
+      const map = {}
+      const sumDir = async (dir) => {
+        let total = 0
+        let entries
+        try { entries = await readdir(dir, { withFileTypes: true }) } catch { return 0 }
+        for (const e of entries) {
+          const full = path.join(dir, e.name)
+          if (e.isDirectory()) total += await sumDir(full)
+          else if (e.isFile()) {
+            try { total += (await stat(full)).size } catch { /* ignore */ }
+          }
+        }
+        return total
+      }
+      const walk = async (dir, depth) => {
+        let entries
+        try { entries = await readdir(dir, { withFileTypes: true }) } catch { return }
+        for (const e of entries) {
+          if (!e.isDirectory()) continue
+          const full = path.join(dir, e.name)
+          if (depth >= 1 && SESSION_DIR_RE.test(e.name)) {
+            map[e.name] = await sumDir(full)
+          } else if (depth < 4) {
+            await walk(full, depth + 1)
+          }
+        }
+      }
+      try {
+        await walk(SESSIONS_ROOT, 0)
+      } catch { /* fail-closed: empty map */ }
+      sizesCache = { at: now, map }
+      return map
+    }
+
     // ── Agent Presence (/pocket) — human supervision capability.
     // Separate namespace from /remfs: filesystem capability vs supervision
     // capability have different permission semantics. Every /pocket operation
     // requires a VALID device credential. (The former Pocket Cockpit and its
     // capability gate were removed — presence is the only /pocket consumer.)
-    const presence = createPresenceService(ctx)
+    const presence = createPresenceService(ctx, {
+      sessionSizeBytes: async (sessionId) => {
+        try {
+          const map = await scanSessionSizes()
+          return Number(map[sessionId]) || 0
+        } catch { return 0 }
+      },
+    })
     const pocketErr = (code, message) => ({ ok: false, error: { code, message, details: {} } })
 
     const pocketHandler = async (endpoint, payload) => {

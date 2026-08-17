@@ -132,9 +132,9 @@ dsh plugin --profile web add @zetaluolang/remfs-persistent
 
 **Windows users (one-click):** double-click **`一键部署.cmd`** — it validates
 the Node version (^22.19 || >=24), auto-installs Node.js + Tailscale, guides the
-Tailscale sign-in, writes the launcher, enables HTTPS Serve, installs the plugin
-and prints the phone URLs (HTTPS, Tailscale IP, and the LAN IP when
-walk-on-LAN is enabled).
+Tailscale sign-in, writes the launcher, registers the self-healing watchdog,
+enables HTTPS Serve, installs the plugin and prints the phone URLs (HTTPS,
+Tailscale IP, and the LAN IP when walk-on-LAN is enabled).
 
 ### First use on the phone (pairing)
 
@@ -146,6 +146,26 @@ walk-on-LAN is enabled).
 4. Enter the code + a device name on the phone → paired. Credentials are stored
    on the phone; the PC stores only the hash.
 5. Revoke devices anytime from the workbench ⋯ → Devices.
+
+### Self-healing watchdog
+
+`install.ps1` registers a Task Scheduler task (**`dsh_harness_watchdog`**, every
+5 minutes, current user, hidden window) that runs
+`%USERPROFILE%\.dsh\launcher\watchdog.ps1`. Each run:
+
+1. Verifies **our** dsh process actually owns `127.0.0.1:3080` — the owning
+   process's command line must contain the deployed dsh bin path (the watchdog
+   reuses the launcher's `Get-OwnedHarnessPid` ownership check; a bare open
+   port is never trusted, so an unrelated localhost service is never
+   mistaken for the harness).
+2. If our harness is down and the port is free, restarts it headlessly via
+   `restart_harness_once.ps1` (`DSH_HEADLESS=1` — no browser, no dialogs) and
+   appends every step to `%USERPROFILE%\.dsh\launcher\watchdog.log`.
+3. If a **foreign** process occupies the port, it logs the conflict and stands
+   down — it never kills or restarts over a process it does not own.
+
+Re-run `install.ps1` (or `一键部署.cmd`) to update the task definition; the
+watchdog itself checks in with one log line every 5 minutes when healthy.
 
 ## Threat model
 
@@ -169,6 +189,7 @@ tight), a compromised host, or a compromised Tailscale account. Details in
 | `npm view` 404s right after a publish | CDN edge cache — wait a minute or query with `Cache-Control: no-cache` |
 | Plugin never appears after `dsh plugin add` | You must also append the loader row and restart `dsh web` |
 | PC sleeps | keep_awake + power plan are handled by the deploy; see `keep_awake.ps1` |
+| Harness keeps dying / phone unreachable | Check `%USERPROFILE%\.dsh\launcher\watchdog.log`; re-run `install.ps1` to (re)register the watchdog task |
 
 ## Tested devices
 

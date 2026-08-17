@@ -30,7 +30,8 @@ if (-not (Test-Path $common)) {
 # The helpers must actually be defined (dot-sourcing ran) before we trust them.
 if (-not (Get-Command Get-OwnedHarnessPid -ErrorAction SilentlyContinue) -or
     -not (Get-Command Get-OwnedForwarderPid -ErrorAction SilentlyContinue) -or
-    -not (Get-Command Sync-RemfsPlugin -ErrorAction SilentlyContinue)) {
+    -not (Get-Command Sync-RemfsPlugin -ErrorAction SilentlyContinue) -or
+    -not (Get-Command Quarantine-DemoSessions -ErrorAction SilentlyContinue)) {
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.MessageBox]::Show("harness-common.ps1 is broken (helpers missing). Re-run install.ps1.", "DeepSeek Harness")
     exit 1
@@ -90,6 +91,12 @@ $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
 # exposed to the network).
 $ready = $true
 if (-not (Test-HarnessRunning)) {
+    # Self-heal: quarantine corrupt demo session folders (dsh aborts startup
+    # on the first corrupt session log) while the harness is down.
+    $quarantined = @(Quarantine-DemoSessions)
+    if ($quarantined.Count -gt 0) {
+        Write-Host "Quarantined $($quarantined.Count) corrupt demo session folder(s): $($quarantined -join ', ')"
+    }
     # Self-heal: with the harness down, its file locks are released, so sync
     # the plugin from vendor into node_modules. Abort rather than launch a
     # harness with a broken plugin import.

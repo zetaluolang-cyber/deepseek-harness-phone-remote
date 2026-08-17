@@ -75,10 +75,11 @@ test('presence api v1: a real task DTO passes validation', () => {
     taskId: 't', sessionId: 's', workspaceId: 'w', title: 'Fix', state: STATE.RUNNING,
     summary: 'working', systemHeartbeatAt: new Date().toISOString(),
     progressHeartbeatAt: new Date().toISOString(), startedAt: 1, updatedAt: 2,
-    attention: null, staleReason: null,
+    attention: null, staleReason: null, sizeBytes: 12345678,
   })
   assert.equal(isTaskDTO(dto), true)
   assert.deepEqual(validateTaskDTO(dto), [])
+  assert.equal(dto.sizeBytes, 12345678)
 })
 
 test('presence api v1: DTO validation fails closed on bad shapes', () => {
@@ -90,6 +91,10 @@ test('presence api v1: DTO validation fails closed on bad shapes', () => {
   const num = makeTaskDTO({ taskId: 't', sessionId: 's' })
   num.updatedAt = 'nope'
   assert.ok(validateTaskDTO(num).some((p) => /updatedAt/.test(p)))
+  const sz = makeTaskDTO({ taskId: 't', sessionId: 's' })
+  sz.sizeBytes = -5
+  assert.ok(validateTaskDTO(sz).some((p) => /sizeBytes/.test(p)), 'negative sizeBytes must fail')
+  assert.equal(makeTaskDTO({ taskId: 't', sessionId: 's' }).sizeBytes, 0, 'sizeBytes defaults to 0 (host cannot measure)')
 })
 
 test('presence api v1: STALE DTO carries explainable staleReason', () => {

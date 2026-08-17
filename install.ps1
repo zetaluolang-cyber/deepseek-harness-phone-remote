@@ -134,10 +134,31 @@ if (-not (Get-Command Get-VersionKey -ErrorAction SilentlyContinue)) {
 $scriptDir = Join-Path $env:USERPROFILE ".dsh\launcher"
 New-Item -ItemType Directory -Force -Path $scriptDir | Out-Null
 
-foreach ($f in @("tailscale_forward.js", "restart_harness.ps1", "stop_harness.ps1", "keep_awake.ps1", "harness-common.ps1", "refresh_pairing.ps1")) {
+foreach ($f in @("tailscale_forward.js", "restart_harness.ps1", "restart_harness_once.ps1", "stop_harness.ps1", "keep_awake.ps1", "harness-common.ps1", "refresh_pairing.ps1", "watchdog.ps1")) {
     if (Test-Path (Join-Path $src $f)) {
         Copy-Item (Join-Path $src $f) (Join-Path $scriptDir $f) -Force
     }
+}
+
+# ---------- 3a. register the self-healing watchdog (create or update) ----------
+# Runs every 5 minutes as the current user with a hidden window. It checks
+# that OUR dsh process owns 127.0.0.1:3080 (command-line verified, never a
+# bare port) and restarts the harness headlessly when it is down. /f makes
+# re-runs UPDATE the task instead of failing on "already exists".
+$watchdogBin = Join-Path $scriptDir "watchdog.ps1"
+if (Test-Path $watchdogBin) {
+    $taskName = "dsh_harness_watchdog"
+    $taskCmd = "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$watchdogBin`""
+    $regOut = (& schtasks /create /tn $taskName /tr $taskCmd /sc minute /mo 5 /f 2>&1 | Out-String)
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[OK] Watchdog scheduled task '$taskName' registered (every 5 minutes, hidden window)" -ForegroundColor Green
+    } else {
+        Write-Host "[!] Watchdog task registration failed (schtasks exit $LASTEXITCODE):" -ForegroundColor Yellow
+        Write-Host "    $regOut" -ForegroundColor Yellow
+        Write-Host "    Manual: schtasks /create /tn $taskName /tr `"$taskCmd`" /sc minute /mo 5 /f" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "[!] watchdog.ps1 missing in $src - watchdog NOT registered" -ForegroundColor Yellow
 }
 
 $template = Join-Path $src "start_harness.template.ps1"

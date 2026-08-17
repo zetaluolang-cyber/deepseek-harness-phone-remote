@@ -153,6 +153,10 @@ export function lastTime(events) {
  */
 export function createPresenceService(ctx, opts = {}) {
   const staleMs = normalizeStaleMs(opts.staleMinutes)
+  // Optional host-provided size probe: (sessionId) => Promise<number> of the
+  // persisted session dir on disk (0 when unknown). Kept as dependency
+  // injection so the service stays unit-testable without a filesystem.
+  const sizeBytesOf = typeof opts.sessionSizeBytes === 'function' ? opts.sessionSizeBytes : null
   // seen-map persists across reconciles so repeated events across calls are
   // suppressed from progress (design §6: duplicate does not advance).
   // Per-SESSION maps: an identical tool call in a DIFFERENT session is
@@ -255,6 +259,11 @@ export function createPresenceService(ctx, opts = {}) {
     const wsId = record.workspaceId || (record.header && record.header.workspaceId) || null
     const wsPath = wsId ? (wsMap.get(String(wsId)) || null) : ((record.header && record.header.cwd) || null)
 
+    let sizeBytes = 0
+    if (sizeBytesOf) {
+      try { sizeBytes = Number(await sizeBytesOf(id)) || 0 } catch { sizeBytes = 0 }
+    }
+
     const task = makeTaskDTO({
       taskId: id,
       sessionId: id,
@@ -262,6 +271,7 @@ export function createPresenceService(ctx, opts = {}) {
       title,
       state: finalState,
       summary,
+      sizeBytes,
       systemHeartbeatAt: hb.systemHeartbeatAt ? new Date(hb.systemHeartbeatAt).toISOString() : null,
       progressHeartbeatAt: hb.progressHeartbeatAt ? new Date(hb.progressHeartbeatAt).toISOString() : null,
       startedAt,

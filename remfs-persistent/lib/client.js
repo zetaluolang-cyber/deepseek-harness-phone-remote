@@ -83,6 +83,8 @@ window.__ModuleLoader__.load({
 .remfs-card .st2{font-size:11px;color:var(--dsw-alias-label-secondary,#999)}
 .remfs-card .la{font-size:11px;color:var(--dsw-alias-label-secondary,#999);word-break:break-all}
 .remfs-card .delta{display:flex;gap:10px;font-size:10px;color:var(--dsw-alias-label-secondary,#999);flex-wrap:wrap}
+.remfs-card .sz{font-size:11px;color:var(--dsw-alias-label-secondary,#999)}
+.remfs-card .sz.warn{color:#ffb86b}
 .remfs-card .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .remfs-open{background:transparent;border:1px solid rgba(74,108,247,.6);color:#7d97ff;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;flex:none}
 .remfs-open:hover{background:rgba(74,108,247,.15)}
@@ -130,6 +132,7 @@ window.__ModuleLoader__.load({
 .remfs-wschip:hover{background:rgba(74,108,247,.2)}
 .remfs-wschip .t{font-size:12px}
 .remfs-wschip .pt{font-size:10px;color:var(--dsw-alias-label-secondary,#999);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.remfs-wschip .pt.warn{color:#ffb86b}
 .remfs-go{padding:8px 12px 10px}
 .remfs-toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:2000;max-width:88vw;padding:10px 16px;border-radius:10px;font-size:13px;background:var(--dsw-specific-sidebar-fill,rgba(30,30,36,.95));color:var(--dsw-alias-label-primary,#eee);border:1px solid var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.4));box-shadow:0 4px 16px rgba(0,0,0,.25);opacity:0;transition:opacity .22s;pointer-events:none;text-align:center;word-break:break-all}
 .remfs-toast-show{opacity:1}
@@ -166,6 +169,10 @@ window.__ModuleLoader__.load({
       return (n / 1024 / 1024).toFixed(1) + ' MB'
     }
 
+    // Sessions above this on-disk size get a "suggest archiving" hint in the
+    // session/workspace lists (big persisted logs bloat harness memory).
+    const ARCHIVE_HINT_BYTES = 10 * 1024 * 1024
+
     const ext = (name) => {
       const i = name.lastIndexOf('.')
       return i < 0 ? '' : name.slice(i + 1).toLowerCase()
@@ -188,6 +195,7 @@ window.__ModuleLoader__.load({
         orbPeekTitle: '任务进展', orbLastProg: '上次推进', orbNoTask: '无任务',
         boardTitle: 'Agent 任务', boardNeedsYou: '需要你', boardRunning: '运行中', boardNotStarted: '未开始', boardDone: '已完成', boardFailed: '失败',
         boardStalled: '可能停滞', boardOpen: '打开', boardEmpty: '暂无任务', boardLoadFail: '任务加载失败',
+        sessSizeWarn: '建议归档', wsSessions: '{n} 个会话 · {size}',
         notifNeedsYou: 'DeepSeek Harness 需要你', notifFailed: 'Agent 执行失败', notifDone: '任务完成',
         wsSection: '已有工作区(点击直接开新会话)', wsEmpty: '暂无,可从下方目录新建',
         wsSection2: '或选择文件夹作为新工作区',
@@ -226,6 +234,7 @@ window.__ModuleLoader__.load({
         orbPeekTitle: 'Task progress', orbLastProg: 'Last progress', orbNoTask: 'No tasks',
         boardTitle: 'Agent tasks', boardNeedsYou: 'Needs You', boardRunning: 'Running', boardNotStarted: 'Not Started', boardDone: 'Done', boardFailed: 'Failed',
         boardStalled: 'Possibly stalled', boardOpen: 'Open', boardEmpty: 'No tasks', boardLoadFail: 'Failed to load tasks',
+        sessSizeWarn: 'suggest archiving', wsSessions: '{n} sessions · {size}',
         notifNeedsYou: 'DeepSeek Harness needs you', notifFailed: 'Agent failed', notifDone: 'Task completed',
         wsSection: 'Existing workspaces (tap to open a new session)', wsEmpty: 'None yet — pick a folder below',
         wsSection2: 'Or choose a folder as a new workspace',
@@ -561,6 +570,10 @@ window.__ModuleLoader__.load({
               React.createElement('div', { className: 'tt' }, (task.stalled ? '◐ ' : '') + (task.title || task.sessionId)),
               React.createElement('button', { className: 'remfs-open', onClick: () => openSession(task.sessionId) }, t('boardOpen'))
             ),
+            task.sizeBytes > 0
+              ? React.createElement('div', { className: 'sz' + (task.sizeBytes > ARCHIVE_HINT_BYTES ? ' warn' : '') },
+                  '📦 ' + fmtSize(task.sizeBytes) + (task.sizeBytes > ARCHIVE_HINT_BYTES ? ' · ' + t('sessSizeWarn') : ''))
+              : null,
             task.summary ? React.createElement('div', { className: 'la' }, task.summary) : null,
             task.staleReason && task.staleReason.length > 0
               ? React.createElement('div', { className: 'remfs-card-stale' }, task.staleReason[0])
@@ -615,6 +628,7 @@ window.__ModuleLoader__.load({
       const [parent, setParent] = React.useState(null)
       const [allowed, setAllowed] = React.useState([])
       const [wsList, setWsList] = React.useState([])
+      const [wsAgg, setWsAgg] = React.useState({}) // workspaceId -> { count, bytes, big } from presence.tasks
       const [entries, setEntries] = React.useState([])
       const [loading, setLoading] = React.useState(false)
       const [error, setError] = React.useState(null)
@@ -728,6 +742,22 @@ window.__ModuleLoader__.load({
         rpc('workspaces', {}).then((r) => {
           if (noteAuth(r)) return
           if (r && r.ok) setWsList((r.value && r.value.workspaces) || [])
+        }).catch(() => {})
+        // Per-workspace session sizes: aggregated from the presence task DTOs
+        // (each carries its persisted session dir size on disk).
+        pocketRpc(conn, 'presence.tasks', {}).then((r) => {
+          if (r && r.ok && r.value && Array.isArray(r.value.tasks)) {
+            const agg = {}
+            for (const task of r.value.tasks) {
+              const wsId = task.workspaceId || ''
+              if (!agg[wsId]) agg[wsId] = { count: 0, bytes: 0, big: false }
+              agg[wsId].count += 1
+              const b = Number(task.sizeBytes) || 0
+              agg[wsId].bytes += b
+              if (b > ARCHIVE_HINT_BYTES) agg[wsId].big = true
+            }
+            setWsAgg(agg)
+          }
         }).catch(() => {})
       }
 
@@ -925,10 +955,17 @@ window.__ModuleLoader__.load({
           React.createElement('span', { className: 'lbl' }, t('wsSection')),
           React.createElement('div', { className: 'remfs-wschips' },
             wsList.length === 0 ? React.createElement('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary,#999)' } }, t('wsEmpty')) :
-            wsList.map((w) => React.createElement('button', { key: w.id, className: 'remfs-wschip', onClick: () => openWorkspace(w.id) },
-              React.createElement('span', { className: 't' }, w.title || w.path),
-              React.createElement('span', { className: 'pt' }, w.path)
-            ))
+            wsList.map((w) => {
+              const a = wsAgg[w.id]
+              return React.createElement('button', { key: w.id, className: 'remfs-wschip', onClick: () => openWorkspace(w.id) },
+                React.createElement('span', { className: 't' }, w.title || w.path),
+                React.createElement('span', { className: 'pt' }, w.path),
+                a && a.count > 0
+                  ? React.createElement('span', { className: 'pt' + (a.big ? ' warn' : '') },
+                      t('wsSessions', { n: a.count, size: fmtSize(a.bytes) }) + (a.big ? ' · ' + t('sessSizeWarn') : ''))
+                  : null
+              )
+            })
           )
         ),
         React.createElement('div', { className: 'remfs-wssec' },

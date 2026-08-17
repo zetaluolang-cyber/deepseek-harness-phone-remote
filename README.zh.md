@@ -75,7 +75,17 @@ dsh plugin --profile web add @zetaluolang/remfs-persistent
 # 重启 dsh web
 ```
 
-**普通 Windows 用户(一键):** 双击 **`一键部署.cmd`** ——校验 Node 版本(^22.19 || >=24)、自动装 Node.js + Tailscale、引导登录、写启动脚本、开 HTTPS Serve、装插件,并打印手机访问地址(HTTPS / Tailscale IP / 开启 walk-on-LAN 时含 LAN IP)。
+**普通 Windows 用户(一键):** 双击 **`一键部署.cmd`** ——校验 Node 版本(^22.19 || >=24)、自动装 Node.js + Tailscale、引导登录、写启动脚本、注册自愈看门狗、开 HTTPS Serve、装插件,并打印手机访问地址(HTTPS / Tailscale IP / 开启 walk-on-LAN 时含 LAN IP)。
+
+### 自愈看门狗
+
+`install.ps1` 会注册一个计划任务(**`dsh_harness_watchdog`**,每 5 分钟、当前用户、隐藏窗口),运行 `%USERPROFILE%\.dsh\launcher\watchdog.ps1`。每次运行:
+
+1. 校验 **我们的** dsh 进程确实占有 `127.0.0.1:3080`——占有进程的命令行必须包含部署的 dsh bin 路径(看门狗复用启动器的 `Get-OwnedHarnessPid` 归属校验;绝不信任裸端口,绝不把无关的 localhost 服务当成 harness)。
+2. 若我们的 harness 不在运行且端口空闲,则以无头方式(`DSH_HEADLESS=1`,不开浏览器、不弹窗)调用 `restart_harness_once.ps1` 拉起,并把每一步追加到 `%USERPROFILE%\.dsh\launcher\watchdog.log`。
+3. 若端口被**外来**进程占用,则记录冲突并让位——绝不误杀、绝不覆盖重启不属于本项目的进程。
+
+重跑 `install.ps1`(或 `一键部署.cmd`)即可更新任务定义;健康时看门狗每 5 分钟写一行日志。
 
 ### 手机首次使用(配对)
 
@@ -103,6 +113,7 @@ dsh plugin --profile web add @zetaluolang/remfs-persistent
 | 发布后 `npm view` 404 | CDN 缓存——等一分钟或用 `Cache-Control: no-cache` |
 | `dsh plugin add` 后插件没出现 | 必须补 loader 行并重启 `dsh web` |
 | 电脑睡眠 | 部署已处理 keep_awake + 电源计划,见 `keep_awake.ps1` |
+| harness 反复挂掉/手机连不上 | 查看 `%USERPROFILE%\.dsh\launcher\watchdog.log`;重跑 `install.ps1`(重新)注册看门狗任务 |
 
 ## 实测设备
 
