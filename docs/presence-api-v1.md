@@ -21,11 +21,14 @@
 ## 2. 传输与鉴权
 
 - 通道:`/pocket` RPC(`conn.rpc`,authority `trusted-host`)
-- 每个操作都要求**有效设备凭据**(`deviceId` + `credential`),否则
+- `presence.status` / `presence.tasks` 是**只读操作**,允许**不携带设备凭据**
+  调用(Orb/任务板渲染在与 GUI 相同的浏览器信任围栏内,DTO 只暴露 GUI
+  已显示的信息:标题/状态/摘要)。携带有效凭据时返回设备能力列表。
+- 其余任何操作都要求**有效设备凭据**(`deviceId` + `credential`),否则
   `auth-invalid`;安全存储损坏时返回 `store-corrupt`
 - (历史上 /pocket 还要求 `cockpit` 设备能力;驾驶舱功能已删除,presence 是
-  /pocket 唯一消费者,鉴权改为仅凭据验证)
-- 请求负载统一携带 `deviceId` / `credential` 字段
+  /pocket 唯一消费者)
+- 请求负载统一携带 `deviceId` / `credential` 字段(仅需鉴权的操作)
 
 ## 3. 状态模型(design §4,§43)
 

@@ -89,14 +89,26 @@ window.__ModuleLoader__.load({
 /* Agent Presence floating ball (design §10-11): fixed over the page,
    draggable. Bright brand-whale badge + state ring + corner state badge +
    text tag — never color-only. */
+/* Agent Presence floating ball (design §10-11): fixed over the page,
+   draggable. Bright brand-whale badge + state ring + corner state badge +
+   text tag — never color-only. Animations: state-colored breathing glow,
+   dashed spin ring while RUNNING, bobbing whale, popping badge, fade-up
+   peek. All pure CSS; prefers-reduced-motion disables them. */
 .remfs-orbwrap{position:fixed;right:16px;bottom:16px;z-index:1500;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none}
 .remfs-orbwrap.drag{cursor:grabbing}
-.remfs-orb{width:46px;height:46px;border-radius:50%;border:2px solid rgba(128,128,128,.5);background:linear-gradient(145deg,#7b96ff 0%,#4a6cf7 50%,#2c4bd6 100%);color:#fff;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;box-shadow:0 6px 20px rgba(47,79,216,.45);transition:transform .12s;position:relative}
+.remfs-orb{width:46px;height:46px;border-radius:50%;border:2px solid rgba(128,128,128,.5);background:linear-gradient(145deg,#7b96ff 0%,#4a6cf7 50%,#2c4bd6 100%);color:#fff;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;box-shadow:0 0 12px var(--orb-glow,rgba(74,108,247,.55)),0 6px 20px rgba(47,79,216,.45);transition:transform .12s;position:relative;animation:remfs-glow 2.8s ease-in-out infinite}
 .remfs-orb:hover{transform:scale(1.06)}
-.remfs-orb-logo{width:26px;height:26px;fill:#fff;pointer-events:none}
-.remfs-orb-badge{position:absolute;top:-5px;right:-5px;width:18px;height:18px;border-radius:50%;background:#fff;color:#16181d;font-size:11px;font-weight:800;line-height:1;display:flex;align-items:center;justify-content:center;border:1.5px solid rgba(22,24,29,.18);box-shadow:0 2px 6px rgba(0,0,0,.35);pointer-events:none}
+.remfs-orb.running::before{content:'';position:absolute;inset:-6px;border-radius:50%;border:2px dashed var(--orb-glow,#4a6cf7);opacity:.65;animation:remfs-spin 7s linear infinite;pointer-events:none}
+@keyframes remfs-glow{0%,100%{box-shadow:0 0 8px var(--orb-glow,rgba(74,108,247,.45)),0 6px 20px rgba(47,79,216,.45)}50%{box-shadow:0 0 18px var(--orb-glow,rgba(74,108,247,.85)),0 6px 20px rgba(47,79,216,.5)}}
+@keyframes remfs-spin{to{transform:rotate(360deg)}}
+@keyframes remfs-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.5px)}}
+@keyframes remfs-pop{from{transform:scale(.3)}to{transform:scale(1)}}
+@keyframes remfs-fade-up{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@media (prefers-reduced-motion: reduce){.remfs-orb,.remfs-orb.running::before,.remfs-orb-logo,.remfs-orb-badge,.remfs-peek{animation:none}}
+.remfs-orb-logo{width:26px;height:26px;fill:#fff;pointer-events:none;animation:remfs-bob 2.6s ease-in-out infinite}
+.remfs-orb-badge{position:absolute;top:-5px;right:-5px;width:18px;height:18px;border-radius:50%;background:#fff;color:#16181d;font-size:11px;font-weight:800;line-height:1;display:flex;align-items:center;justify-content:center;border:1.5px solid rgba(22,24,29,.18);box-shadow:0 2px 6px rgba(0,0,0,.35);pointer-events:none;animation:remfs-pop .25s cubic-bezier(.2,1.6,.4,1)}
 .remfs-orb-tag{font-size:10px;color:var(--dsw-alias-label-primary,#eee);background:rgba(20,20,24,.82);padding:1px 8px;border-radius:999px;pointer-events:none;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.remfs-peek{position:fixed;right:16px;bottom:76px;z-index:1510;width:min(320px,92vw);background:var(--dsw-specific-sidebar-fill,#202024);border:1px solid rgba(128,128,128,.3);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px;box-shadow:0 8px 28px rgba(0,0,0,.45)}
+.remfs-peek{position:fixed;right:16px;bottom:76px;z-index:1510;width:min(320px,92vw);background:var(--dsw-specific-sidebar-fill,#202024);border:1px solid rgba(128,128,128,.3);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px;box-shadow:0 8px 28px rgba(0,0,0,.45);animation:remfs-fade-up .18s ease-out}
 .remfs-peek-state{font-size:13px;font-weight:700}
 .remfs-peek-title{font-size:13px}
 .remfs-peek-summary{font-size:12px;color:var(--dsw-alias-label-secondary,#999)}
@@ -485,9 +497,9 @@ window.__ModuleLoader__.load({
           onPointerCancel: onPointerUp,
         },
           React.createElement('button', {
-            className: 'remfs-orb',
+            className: 'remfs-orb' + (orb.state === P_RUNNING ? ' running' : ''),
             title: t('orbTitle') + ': ' + orb.text + (orb.title ? ' — ' + orb.title : ''),
-            style: { borderColor: orb.color },
+            style: { borderColor: orb.color, '--orb-glow': orb.color },
             onClick: () => {
               if (draggedRef.current) { draggedRef.current = false; return }
               setPeekOpen(!peekOpen)
@@ -496,7 +508,7 @@ window.__ModuleLoader__.load({
             React.createElement('svg', { className: 'remfs-orb-logo', viewBox: '0 0 50 50', 'aria-hidden': 'true' },
               React.createElement('path', { d: WHALE_LOGO_PATH })
             ),
-            React.createElement('span', { className: 'remfs-orb-badge' }, orb.icon)
+            React.createElement('span', { key: orb.state, className: 'remfs-orb-badge' }, orb.icon)
           ),
           React.createElement('span', { className: 'remfs-orb-tag' }, orb.text)
         ),

@@ -131,7 +131,18 @@ export default {
       if (authRes.error === 'store-corrupt') {
         return pocketErr('store-corrupt', 'security store corrupt — see ~/.dsh/remfs-security.json.corrupt-*')
       }
-      if (authRes.error) return pocketErr('auth-invalid', 'device authentication failed — re-pair the device')
+      // Read-only presence is allowed WITHOUT a device credential: the Orb /
+      // Board render inside the same browser-trust fence as the GUI itself,
+      // and the DTOs expose only what the GUI already shows (title / state /
+      // summary). Device credentials still gate /remfs and every other
+      // /pocket operation, and a verified device gets its capabilities back
+      // in presence.status. (Dogfood fix: the PC browser never pairs, so the
+      // Orb showed "Idle" forever.)
+      if (authRes.error) {
+        if (endpoint === PRESENCE_OPS.STATUS) return presence.status(null)
+        if (endpoint === PRESENCE_OPS.TASKS) return presence.tasks()
+        return pocketErr('auth-invalid', 'device authentication failed — re-pair the device')
+      }
       switch (endpoint) {
         case PRESENCE_OPS.STATUS: return presence.status(authRes.device)
         case PRESENCE_OPS.TASKS: return presence.tasks()

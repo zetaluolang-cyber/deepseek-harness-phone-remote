@@ -89,6 +89,19 @@ test('host source: registers /pocket with device-auth, presence ops only', () =>
   assert.doesNotMatch(HOST_SRC, /cockpit\.sessions|cockpit\.away|cockpit\.check/, 'cockpit ops must be removed')
 })
 
+test('host source: read-only presence works WITHOUT a device credential (PC browser)', () => {
+  // Dogfood fix: the PC browser never pairs, so the Orb stayed "Idle" — the
+  // Orb/Board render inside the GUI's own browser-trust fence and the DTOs
+  // expose only what the GUI already shows. Auth errors fall through to the
+  // read-only presence ops; everything else still fails closed.
+  const gate = HOST_SRC.slice(HOST_SRC.indexOf('const pocketHandler'))
+  assert.match(gate, /authRes\.error\)\s*\{[\s\S]*?PRESENCE_OPS\.STATUS/,
+    'unauthorized requests must still serve presence.status')
+  assert.match(gate, /authRes\.error\)\s*\{[\s\S]*?PRESENCE_OPS\.TASKS/,
+    'unauthorized requests must still serve presence.tasks')
+  assert.match(gate, /auth-invalid/, 'non-presence unauthorized requests still fail closed')
+})
+
 test('client source: presence handoff opens the EXISTING session (no replacement)', () => {
   assert.match(CLIENT_SRC, /sessions\.open\(/, 'client must use ctx.sessions.open(id) for handoff')
   const handoff = CLIENT_SRC.slice(CLIENT_SRC.indexOf('__remfsSessionsApi'))
