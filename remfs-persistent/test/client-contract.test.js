@@ -74,56 +74,35 @@ test('client source: upstream CSS-module selectors are isolated in one adapter',
   }
 })
 
-// Pocket Cockpit (v0.3 Phase 1): host must register the /pocket namespace
-// (separate from /remfs), gate every operation on device auth + the cockpit
-// capability, and the client must open an EXISTING session (handoff) via
-// ctx.sessions.open(id) - never create a replacement.
-test('host source: registers /pocket with device-auth + cockpit capability gate', () => {
+// /pocket (Agent Presence): host registers the namespace (separate from
+// /remfs), authenticates every call with the device credential, and
+// implements ONLY the frozen presence operations (docs/presence-api-v1.md).
+// The former Pocket Cockpit and its capability gate were removed.
+test('host source: registers /pocket with device-auth, presence ops only', () => {
   assert.match(HOST_SRC, /rpc\.handle\('\/pocket'/, 'host must register the /pocket channel')
   assert.match(HOST_SRC, /verifyDevice\(/, 'host must authenticate /pocket calls with the device credential')
-  assert.match(HOST_SRC, /deviceHasCapability|capability-denied/,
-    'host must gate /pocket on the cockpit device capability')
+  assert.match(HOST_SRC, /PRESENCE_OPS\.STATUS/, 'host must implement presence.status')
+  assert.match(HOST_SRC, /PRESENCE_OPS\.TASKS/, 'host must implement presence.tasks')
+  assert.match(HOST_SRC, /bad-request/, 'unknown endpoints must fail with bad-request')
+  // cockpit is gone: no POCKET_OPS, no cockpit capability gate, no away ops
+  assert.doesNotMatch(HOST_SRC, /POCKET_OPS/, 'cockpit operations must be removed')
+  assert.doesNotMatch(HOST_SRC, /cockpit\.sessions|cockpit\.away|cockpit\.check/, 'cockpit ops must be removed')
 })
 
-test('host source: /pocket implements cockpit.status/sessions and away start/stop (no approval yet)', () => {
-  // host must wire the shared POCKET_OPS constants for every Phase-1 op
-  assert.match(HOST_SRC, /POCKET_OPS\.STATUS/, 'host must implement cockpit.status')
-  assert.match(HOST_SRC, /POCKET_OPS\.SESSIONS/, 'host must implement cockpit.sessions')
-  assert.match(HOST_SRC, /POCKET_OPS\.AWAY_START/, 'host must implement cockpit.away.start')
-  assert.match(HOST_SRC, /POCKET_OPS\.AWAY_STOP/, 'host must implement cockpit.away.stop')
-  assert.match(HOST_SRC, /POCKET_OPS\.CHECK/, 'host must implement cockpit.check (since-last-check anchor)')
-  // the shared contract defines the literal operation names (single source)
-  assert.match(HOST_SRC, /POCKET_OPS/, 'host must use the shared cockpit contract')
-  // Phase 1 explicitly has NO approval response operations
-  assert.doesNotMatch(HOST_SRC, /approval\.respond|approval\.list/,
-    'Phase 1 must not implement approval operations')
-})
-
-test('client source: cockpit handoff opens the EXISTING session (no replacement)', () => {
+test('client source: presence handoff opens the EXISTING session (no replacement)', () => {
   assert.match(CLIENT_SRC, /sessions\.open\(/, 'client must use ctx.sessions.open(id) for handoff')
-  const handoff = CLIENT_SRC.slice(CLIENT_SRC.indexOf('cockpit'))
+  const handoff = CLIENT_SRC.slice(CLIENT_SRC.indexOf('__remfsSessionsApi'))
   assert.doesNotMatch(handoff, /fork\(|create\(/,
     'handoff must never create a replacement session')
 })
 
-test('client source: cockpit is the default home, attention-first order, per-status CTA, since-last-check', () => {
-  // design §21: Cockpit is the default view; away is NOT the hero button
-  assert.match(CLIENT_SRC, /useState\('cockpit'\)/, 'cockpit must be the default tab')
-  assert.match(CLIENT_SRC, /NEEDS YOU|Needs You/, 'client must render Needs You section')
-  assert.match(CLIENT_SRC, /Catch up|catchup/, 'Finished card must offer Catch up')
-  assert.match(CLIENT_SRC, /Inspect|inspect/, 'Failed card must offer Inspect')
-  assert.match(CLIENT_SRC, /Review|review/, 'Needs You card must offer Review')
-  // since-last-check copy (design §10)
-  assert.match(CLIENT_SRC, /lastCockpitViewedAt|Since your last check|since your last check/,
-    'client must render the automatic since-last-check context')
-})
-
-test('client source: cockpit is an INDEPENDENT entry (header button opens the cockpit directly, not the workbench drawer)', () => {
-  // design §16/§21: the header button opens the cockpit, not the file drawer
-  assert.match(CLIENT_SRC, /setCockpitOpen/, 'client must own a dedicated cockpit-open state')
-  assert.match(CLIENT_SRC, /CockpitOverlayBridge/, 'client must render a dedicated cockpit overlay')
-  assert.match(CLIENT_SRC, /remfs\.cockpit/, 'client must register a dedicated cockpit entry in the header slot')
-  assert.match(CLIENT_SRC, /WorkbenchToggle/, 'client keeps a separate workbench entry (Files/Sessions)')
+test('client source: cockpit UI is fully removed', () => {
+  assert.doesNotMatch(CLIENT_SRC, /CockpitPanel|CockpitOverlayBridge|HeaderToggle/,
+    'cockpit components must be removed')
+  assert.doesNotMatch(CLIENT_SRC, /remfs\.cockpit|setCockpitOpen|tabCockpit|headCockpit/,
+    'cockpit entries/i18n must be removed')
+  assert.match(CLIENT_SRC, /useState\('files'\)/, 'workbench must default to Files (no cockpit tab)')
+  assert.match(CLIENT_SRC, /WorkbenchToggle/, 'client keeps the workbench entry (Files/Sessions)')
 })
 
 // Agent Presence Phase B: Orb + Task Board + notifications consume ONLY the

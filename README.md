@@ -1,21 +1,26 @@
-# DeepSeek Harness Pocket Cockpit
+# DeepSeek Harness Phone Remote
 
-**Leave your desk, not your agent.**
+**Don't watch your agent. Keep its pulse.**
 
-A secure, zero-app mobile cockpit for DeepSeek Harness. Monitor running agents,
-handle approvals, review what changed while you were away, and continue the same
-session from your phone.
+A secure, zero-app remote workspace for DeepSeek Harness. Reach the real Harness
+web UI from your phone over Tailscale (or LAN), manage files and workspaces, and
+keep an ambient eye on your agents through Agent Presence — the floating Orb,
+Task Board and notifications.
 
-- **👁 Monitor** — see what every running agent is doing.
-- **⚠ Decide** — handle consequential approvals from an authenticated device.
-- **↔ Handoff** — leave the desk and continue the same session from your phone.
-- **Δ Catch up** — see exactly what changed while you were away.
+- **🎈 Agent Presence** — floating brand Orb (drag anywhere): Needs You / Failed /
+  Possibly Stalled / Running / Done / Idle / Disconnected, with a Task Board and
+  browser notifications for what needs you.
+- **📁 Files & workspaces** — start/resume an agent in any approved folder; read,
+  write, upload, download files.
+- **↔ Handoff** — leave the desk and continue the *same* session from your phone
+  (`sessions.open` — never a replacement session).
+- **🔐 Device pairing** — one-time code, per-device credentials, revocation.
 
 > This project does not replace the Harness UI. It turns Harness itself into a
 > remote work environment: the phone opens the *real* DeepSeek Harness web UI over
 > Tailscale (or your LAN), and a persistent plugin bridges the gaps a browser
-> can't close remotely — starting/resuming an agent in any folder, reading and
-> writing files, and (v0.3) supervising running agents from a mobile cockpit.
+> can't close remotely — authenticated file/workspace access and Agent Presence
+> (Orb / Task Board / notifications).
 
 **English** | [中文](README.zh.md) · [Architecture](docs/architecture.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 

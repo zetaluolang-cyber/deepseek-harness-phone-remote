@@ -23,7 +23,8 @@
 - 通道:`/pocket` RPC(`conn.rpc`,authority `trusted-host`)
 - 每个操作都要求**有效设备凭据**(`deviceId` + `credential`),否则
   `auth-invalid`;安全存储损坏时返回 `store-corrupt`
-- 设备必须具备 `cockpit` 能力,否则 `capability-denied`(旧设备默认具备)
+- (历史上 /pocket 还要求 `cockpit` 设备能力;驾驶舱功能已删除,presence 是
+  /pocket 唯一消费者,鉴权改为仅凭据验证)
 - 请求负载统一携带 `deviceId` / `credential` 字段
 
 ## 3. 状态模型(design §4,§43)
@@ -74,7 +75,7 @@ STALE 是**可解释的观察事实**,不断言死锁;理由在 `staleReason` �
     "apiVersion": "v1",
     "staleMinutes": 20,
     "serverTime": "2026-08-17T00:00:00.000Z",
-    "capabilities": ["cockpit"]
+    "capabilities": ["files", "approval"]
   }
 }
 ```
@@ -135,7 +136,7 @@ STALE 是**可解释的观察事实**,不断言死锁;理由在 `staleReason` �
 |---|---|
 | `auth-invalid` | 设备凭据无效/未配对 |
 | `store-corrupt` | 安全存储损坏(见 `.corrupt-*` 文件) |
-| `capability-denied` | 设备缺少 `cockpit` 能力 |
+| `capability-denied` | **冻结遗留码**:驾驶舱能力门禁已随功能删除,保留在 v1 词汇表(不触发) |
 | `bad-request` | 未知操作 |
 | `capability-unavailable` | `sessionQuery` 不可用(presence 被禁用) |
 | `sessions-unavailable` | 会话查询失败 |

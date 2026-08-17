@@ -18,9 +18,12 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile, rename, copyFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { DEFAULT_DEVICE_CAPABILITIES, hasCapability } from './cockpit/contract.js'
 
 // ---------------------------------------------------------------- constants
+
+// Default capabilities for a newly paired device (the Pocket Cockpit concept
+// was removed; 'files' + 'approval' remain the baseline).
+export const DEFAULT_DEVICE_CAPABILITIES = Object.freeze(['files', 'approval'])
 
 export const PAIRING_TTL_MS = 10 * 60 * 1000 // pairing code validity
 export const CREDENTIAL_BYTES = 32 // long-term device credential (256-bit)
@@ -387,10 +390,9 @@ export async function pairDevice(code, deviceName, file = securityFile()) {
       createdAt: new Date().toISOString(),
       lastSeen: new Date().toISOString(),
       credentialHash: sha256(credential),
-      // Pocket Cockpit capability model (v0.3 Phase 1): every newly paired
-      // device gets files + cockpit + approval by default. Existing devices
-      // without the field migrate to the same default (hasCapability treats a
-      // missing/empty list as the default).
+      // Capability model: every newly paired device gets the default set
+      // (files + approval). Existing devices without the field migrate to
+      // the same default.
       capabilities: DEFAULT_DEVICE_CAPABILITIES.slice(),
     })
     await saveStore(file, store)
@@ -422,7 +424,8 @@ export async function verifyDevice(deviceId, credential, file = securityFile()) 
 
 /** True when a verified device has `cap` (defaults for legacy devices). */
 export function deviceHasCapability(device, cap) {
-  return hasCapability(device && device.capabilities, cap)
+  const caps = device && device.capabilities
+  return Array.isArray(caps) && caps.includes(cap)
 }
 
 export async function listDevices(file = securityFile()) {

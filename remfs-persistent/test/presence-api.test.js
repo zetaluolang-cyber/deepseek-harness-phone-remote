@@ -58,9 +58,13 @@ test('presence api v1: every error code the implementation can emit is in ERROR_
   for (const c of used) {
     assert.ok(codes.has(c), 'implementation uses error code "' + c + '" but ERROR_CODES does not define it')
   }
-  // and ERROR_CODES must not list codes the implementation never uses (dead vocabulary)
+  // capability-denied is a frozen legacy code: the cockpit capability gate
+  // was removed with the cockpit feature; the code stays in the v1
+  // vocabulary (never emitted) so existing consumers keep parsing.
+  const frozenLegacy = new Set(['capability-denied'])
   for (const c of codes) {
-    assert.ok(used.has(c) || c === 'bad-request', 'ERROR_CODES lists "' + c + '" but no implementation site uses it')
+    assert.ok(used.has(c) || frozenLegacy.has(c),
+      'ERROR_CODES lists "' + c + '" but no implementation site uses it')
   }
 })
 
