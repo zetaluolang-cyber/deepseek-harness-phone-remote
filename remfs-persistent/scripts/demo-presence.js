@@ -81,13 +81,24 @@ function demoDir(wsRoot, id) {
   return path.join(wsRoot, id)
 }
 
-export function addDemos() {
+const DEMO_STATES = ['running', 'failed', 'disconnected']
+
+function pickIds(filter) {
+  if (!filter || filter === 'all') return DEMO_IDS.slice()
+  const wanted = (Array.isArray(filter) ? filter : [filter]).filter((s) => DEMO_STATES.includes(s))
+  return DEMO_IDS.filter((id) => wanted.some((s) => id.endsWith('-' + s)))
+}
+
+export function addDemos(filter) {
   const root = sessionsRoot()
   const wsRoot = path.join(root, WORKSPACE_DIR)
   fs.mkdirSync(wsRoot, { recursive: true })
+  const all = new Map(buildSessions().map((s) => [s.id, s]))
   let count = 0
-  for (const s of buildSessions()) {
-    const dir = demoDir(wsRoot, s.id)
+  for (const id of pickIds(filter)) {
+    const s = all.get(id)
+    if (!s) continue
+    const dir = demoDir(wsRoot, id)
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, 'session.jsonl.zstd'), s.log)
     count += 1
@@ -95,10 +106,10 @@ export function addDemos() {
   return count
 }
 
-export function cleanDemos() {
+export function cleanDemos(filter) {
   const wsRoot = path.join(sessionsRoot(), WORKSPACE_DIR)
   let count = 0
-  for (const id of DEMO_IDS) {
+  for (const id of pickIds(filter)) {
     const dir = path.join(wsRoot, id)
     if (fs.existsSync(dir)) {
       fs.rmSync(dir, { recursive: true, force: true })
@@ -110,12 +121,14 @@ export function cleanDemos() {
 
 const args = process.argv.slice(2)
 if (args.includes('--add')) {
-  const n = addDemos()
+  const i = args.indexOf('--add')
+  const n = addDemos(args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : 'all')
   console.log('wrote ' + n + ' demo sessions into ' + sessionsRoot())
   console.log('restart the harness (schtasks /run /tn dsh_restart) so session-query indexes them.')
 } else if (args.includes('--clean')) {
-  const n = cleanDemos()
+  const i = args.indexOf('--clean')
+  const n = cleanDemos(args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : 'all')
   console.log('removed ' + n + ' demo sessions (real sessions untouched)')
 } else {
-  console.log('usage: node scripts/demo-presence.js --add | --clean')
+  console.log('usage: node scripts/demo-presence.js --add [all|running|failed|disconnected] | --clean [all|running|failed|disconnected]')
 }
