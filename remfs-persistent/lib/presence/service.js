@@ -25,6 +25,7 @@ import { summarize, staleReasonLines } from './summary.js'
 import {
   STATE, STATE_PRIORITY, highestPriorityTask, makeTaskDTO, normalizeStaleMs,
 } from './contract.js'
+import { API_ENGINE, API_VERSION } from './api.js'
 
 function err(code, message) {
   return { ok: false, error: { code, message, details: {} } }
@@ -274,13 +275,15 @@ export function createPresenceService(ctx, opts = {}) {
   return {
     /**
      * presence.status — presence engine availability + stale threshold.
+     * Frozen v1 shape (docs/presence-api-v1.md): engine + apiVersion.
      * @param {Object} device - verified device.
      */
     async status(device) {
       return {
         ok: true,
         value: {
-          engine: 'presence-v1',
+          engine: API_ENGINE,
+          apiVersion: API_VERSION,
           staleMinutes: Math.round(staleMs / 60000),
           serverTime: new Date().toISOString(),
           capabilities: (device && device.capabilities) || [],

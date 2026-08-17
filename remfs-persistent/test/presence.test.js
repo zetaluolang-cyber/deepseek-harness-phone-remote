@@ -16,7 +16,12 @@ import {
   createPresenceService, terminalFailure, hasToolErrorInLastTurn, hasOpenTurn,
 } from '../lib/presence/service.js'
 
-const t0 = Date.UTC(2026, 7, 17, 0, 0, 0)
+// Dynamic "now-ish" base time: the service aggregator reconciles against the
+// REAL clock (Date.now()), so a fixed absolute t0 becomes a time bomb once
+// the real time passes t0 + system TTL (events look dead -> DISCONNECTED).
+// t0 is kept 5s in the past: fresh enough for RUNNING/DONE/FAILED assertions
+// and stable across any real clock.
+const t0 = Date.now() - 5000
 const ev = (type, data, time = t0, seq = 0) => ({ seq, type, time, data })
 const toolOk = (name = 'bash', args = '{}', time = t0) => ev('tool/result', { name, message: { role: 'tool', content: 'ok' }, arguments: args }, time)
 const toolErr = (name = 'bash', time = t0) => ev('tool/result', { name, error: { name: 'E', code: '1' } }, time)
