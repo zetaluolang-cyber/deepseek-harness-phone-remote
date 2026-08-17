@@ -213,7 +213,8 @@ export function createPresenceService(ctx, opts = {}) {
 
   /** Aggregate ONE session into a presence task DTO. */
   async function aggregateSession(record, wsMap, live, now, prevStates) {
-    const id = String(record.id || record.sessionId || '')
+    // DSH SessionRecord shape: { header: { id, createdAt, ... }, live, persisted }
+    const id = String(record.id || record.sessionId || (record.header && record.header.id) || '')
     if (!id) return null
     const events = await sessionEvents(id)
     let seen = seenBySession.get(id)

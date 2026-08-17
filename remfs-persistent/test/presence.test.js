@@ -276,6 +276,30 @@ test('presence service: aggregates sessions into tasks with state + heartbeats',
   assert.ok(byId['s-running'].progressHeartbeatAt)
 })
 
+test('presence service: real DSH SessionRecord shape ({ header: { id } }) is aggregated', async () => {
+  // dogfood finding: the live sessionQuery returns records shaped
+  // { header: { id, createdAt, ... }, live, persisted } — reading only
+  // record.id produced NO tasks and an always-empty Orb.
+  const ctx = fakeCtx({
+    records: [
+      { header: { id: 's-live', createdAt: t0 }, live: true, persisted: false },
+      { header: { id: 's-persisted', createdAt: t0 }, live: false, persisted: true },
+    ],
+    eventsBySession: {
+      's-live': [turnStart(1, t0), toolOk('bash', '{"command":"live"}', t0 + 100)],
+      's-persisted': [turnStart(1, t0), turnEnd('completed', 1, t0 + 200)],
+    },
+  })
+  const svc = createPresenceService(ctx, { staleMinutes: 20 })
+  const res = await svc.tasks()
+  assert.equal(res.ok, true)
+  assert.equal(res.value.tasks.length, 2, 'both DSH-shaped records must aggregate')
+  const byId = Object.fromEntries(res.value.tasks.map((t) => [t.sessionId, t]))
+  assert.equal(byId['s-live'].state, STATE.RUNNING)
+  assert.equal(byId['s-persisted'].state, STATE.DONE)
+  assert.ok(res.value.orb, 'orb must pick the highest-priority task')
+})
+
 test('presence service: STALE with no progress + live heartbeat, then recovery to RUNNING', async () => {
   const past = Date.now() - (21 * 60 * 1000)
   const now = Date.now()
