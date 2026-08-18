@@ -2,6 +2,40 @@
 
 All notable changes to `@zetaluolang/remfs-persistent` and the deploy package.
 
+## [1.2.0] — 2026-08 (self-healing + data-integrity release)
+
+- **Self-healing watchdog** — scheduled task (`dsh_harness_watchdog`, every 5
+  minutes) verifies by process ownership (never a bare port) that the harness
+  owns 127.0.0.1:3080, and headlessly restarts it when down; foreign listeners
+  are logged and left alone. Consecutive-failure escalation: after 3 failed
+  recoveries a `watchdog.failed` marker is written so a silently broken
+  recovery cannot hide in the log.
+- **Startup quarantine** — corrupt `demo-presence-*` session folders (and
+  nested stray workspace directories) are moved aside before launch instead of
+  bricking the dsh workspace plugin (recursive scan, never deletes).
+- **Session size hints** — phone UI shows each session size and flags >10 MB
+  with "建议归档 / suggest archiving".
+- **Session archiving** — `scripts/archive-sessions.ps1` moves oversized
+  sessions to `~/.dsh/sessions-archive\<date>\` and prunes their registry
+  references (with backups); refuses while the harness is up unless forced.
+- **demo-presence guardrails** — fixed `cwd` in headers (was `process.cwd()`,
+  which produced header/cwd-identify corruptions), idempotent `--add`
+  (cleans first), harness-running warning, `REMF_DEMO_SESSIONS_ROOT` test
+  escape hatch, real restart hint, behavior tests.
+- **Presence engine** — 7-state agent presence (Orb + Task Board) over the
+  `/pocket` channel; read-only status/tasks visible without pairing, everything
+  else device-authenticated; dump-session tool for full conversation export.
+- **UTF-8 encoding guard** — upload/edit rejects UTF-16 BOMs and invalid
+  UTF-8 (GBK/ANSI) writes with a clear message; preserves BOM and dominant
+  newline style on write-back.
+- **/pocket strict mode** — opt-in via `~/.dsh/remfs-options.json`
+  (`pocketStrict: true`) makes status/tasks require a valid device credential
+  too.
+- **Docs & tooling** — Tailscale ACL hardening guide, upgrade checklist,
+  desktop shortcut managed by `install.ps1`, install deploys
+  `restart_harness_once.ps1` and `watchdog.ps1`, CI covers watchdog syntax and
+  the new tests (128 tests green).
+
 ## [1.1.2] — 2026-08 (regression-fix pass, CI green)
 
 - **Revoke protocol** — client now sends `targetDeviceId`; added a true

@@ -19,6 +19,9 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $common = Join-Path $scriptDir "harness-common.ps1"
 $logFile = Join-Path $scriptDir "watchdog.log"
 $restartBin = Join-Path $scriptDir "restart_harness_once.ps1"
+$stateFile = Join-Path $scriptDir "watchdog.state"
+$failedFile = Join-Path $scriptDir "watchdog.failed"
+$maxFailures = 3
 
 function Write-WatchdogLog {
     param([string]$Message)
@@ -26,6 +29,35 @@ function Write-WatchdogLog {
     try { $line | Out-File -FilePath $logFile -Append -Encoding ascii } catch { }
 }
 
+# Reset the consecutive-failure counter after any healthy outcome.
+function Reset-WatchdogState {
+    try { Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue } catch { }
+    try { Remove-Item -LiteralPath $failedFile -Force -ErrorAction SilentlyContinue } catch { }
+}
+
+# Record a failed recovery; returns the consecutive failure count. Escalates
+# to a visible marker file after $maxFailures consecutive failures so a
+# silently broken recovery cannot hide forever in the log.
+function Add-WatchdogFailure {
+    $count = 0
+    try {
+        if (Test-Path $stateFile) {
+            $raw = [System.IO.File]::ReadAllText($stateFile)
+            if ($raw -match '^\d+') { $count = [int]($raw -split "`r?`n")[0] }
+        }
+    } catch { }
+    $count += 1
+    try {
+        [System.IO.File]::WriteAllText($stateFile, ($count.ToString() + "`n" + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')), (New-Object System.Text.UTF8Encoding($false)))
+    } catch { }
+    if ($count -ge $maxFailures) {
+        try {
+            [System.IO.File]::WriteAllText($failedFile, ("$count consecutive recovery failures - last at " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ". Manual intervention needed (see watchdog.log)`n"), (New-Object System.Text.UTF8Encoding($false)))
+        } catch { }
+        Write-WatchdogLog ("ESCALATE: $count consecutive recovery failures - watchdog.failed marker written")
+    }
+    return $count
+}
 if (-not (Test-Path $common)) {
     Write-WatchdogLog "FATAL: harness-common.ps1 missing - ownership cannot be verified; nothing done"
     exit 1
@@ -55,6 +87,7 @@ if (-not $marker) {
 
 $owned = Get-OwnedHarnessPid -Port 3080 -Marker $marker
 if ($null -ne $owned) {
+    Reset-WatchdogState
     Write-WatchdogLog "OK: our harness (pid $owned) owns 127.0.0.1:3080"
     exit 0
 }
@@ -65,6 +98,7 @@ if ($null -ne $owned) {
 $foreign = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 3080 -State Listen -ErrorAction SilentlyContinue
 if ($foreign) {
     $pids = ($foreign.OwningProcess | Sort-Object -Unique) -join ','
+    Reset-WatchdogState
     Write-WatchdogLog "WARN: 127.0.0.1:3080 is listening but NOT ours (foreign pid(s): $pids) - standing down"
     exit 0
 }
@@ -82,7 +116,9 @@ try {
 Start-Sleep -Seconds 3
 $after = Get-OwnedHarnessPid -Port 3080 -Marker $marker
 if ($null -ne $after) {
+    Reset-WatchdogState
     Write-WatchdogLog "RECOVERED: our harness is up (pid $after)"
 } else {
-    Write-WatchdogLog "NOT RECOVERED: harness still down after restart (see launcher harness_*.log)"
+    $fails = Add-WatchdogFailure
+    Write-WatchdogLog "NOT RECOVERED: harness still down after restart ($fails consecutive failure(s); see launcher harness_*.log)"
 }
