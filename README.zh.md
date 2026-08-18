@@ -55,7 +55,10 @@ flowchart LR
 - **配对只保护 `/remfs`,不保护原生 Harness `/api`**:GUI 自身 API 没有用户登录;请收紧网络边界(tailnet / 局域网)并定期检查可达设备。
 - **文件白名单是主要文件权限边界**:远程客户端只能*收窄*白名单;扩大(`C:\`、新盘符)必须在本机编辑 `.remfs-roots.json`。
 - **路径逃逸双重防御**:带 `..`/UNC 的原始路径直接拒绝;规范后的 realpath 必须落在白名单内(符号链接/junction 逃逸失败)。
-- 完整威胁模型见 [SECURITY.md](SECURITY.md)。
+- **远端写入有编码保护**:上传/编辑非 UTF-8 文件(UTF-16 BOM、GBK/ANSI 字节)会被拒绝而不是写坏;编辑写回时保留原文件的 UTF-8 BOM 与换行风格(CRLF/LF)。
+- **presence 只读围栏是运维开关**:默认 Orb/任务板在浏览器信任围栏内免认证可用;在 `~/.dsh/remfs-options.json` 设 `pocketStrict: true` 后,所有 `/pocket` 调用都必须携带有效设备凭据。
+- **Tailscale ACL 建议硬化**为仅手机可访问 443/3080——见 [docs/tailscale-acls.md](docs/tailscale-acls.md)。
+- 完整威胁模型见 [SECURITY.md](SECURITY.md);升级前备份与验证清单见 [docs/upgrade.md](docs/upgrade.md)。
 
 ## 定位
 
@@ -127,8 +130,14 @@ dsh plugin --profile web add @zetaluolang/remfs-persistent
 - [x] 设备配对 + 凭据认证 + 吊销
 - [x] 能力受限白名单 + 保护路径 + 路径逃逸测试
 - [x] 双语界面、安全测试、CI
+- [x] 启动隔离损坏 demo 会话 + 自愈看门狗
+- [x] 会话体积提示 + 手机端"建议归档"
+- [x] demo-presence 行为测试(幂等 add、固定 cwd、只清理 demo)
+- [x] 上传/编辑 UTF-8 编码保护 + BOM/换行保留
+- [x] /pocket 严格模式(可选,`~/.dsh/remfs-options.json`)
+- [x] Tailscale ACL 加固指南
+- [x] 桌面快捷方式自动化(install.ps1)
 - [ ] 更多分辨率验证
-- [ ] Tailscale ACL 加固指南
 - [ ] 上游贡献
 
 ## License

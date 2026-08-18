@@ -8,7 +8,7 @@
 // safe workspace-root resolution depends on them at apply time - relying on
 // accidental plugin ordering would make the fail-closed root resolution
 // nondeterministic.
-import { ensurePairingCode, rotatePairingCode, verifyDevice } from './security.js'
+import { ensurePairingCode, rotatePairingCode, verifyDevice, readRemfsOptions } from './security.js'
 import { createDispatcher } from './dispatch.js'
 import { createPresenceService } from './presence/service.js'
 import { PRESENCE_OPS } from './presence/contract.js'
@@ -178,6 +178,12 @@ export default {
     })
     const pocketErr = (code, message) => ({ ok: false, error: { code, message, details: {} } })
 
+    // Operator switch (~/.dsh/remfs-options.json, read once at apply time):
+    // pocketStrict:true requires a VALID device credential for the read-only
+    // presence ops too (the Orb/Board no longer work unauthenticated). Default
+    // (no file / false) keeps the read-only fence for the PC browser.
+    const remfsOptions = readRemfsOptions()
+
     const pocketHandler = async (endpoint, payload) => {
       const authRes = await verifyDevice(
         payload && payload.deviceId,
@@ -192,10 +198,14 @@ export default {
       // summary). Device credentials still gate /remfs and every other
       // /pocket operation, and a verified device gets its capabilities back
       // in presence.status. (Dogfood fix: the PC browser never pairs, so the
-      // Orb showed "Idle" forever.)
+      // Orb showed "Idle" forever.) With remfs-options.json pocketStrict=true
+      // this read-only fence is DISABLED and every /pocket call requires a
+      // valid device credential.
       if (authRes.error) {
-        if (endpoint === PRESENCE_OPS.STATUS) return presence.status(null)
-        if (endpoint === PRESENCE_OPS.TASKS) return presence.tasks()
+        if (!remfsOptions.pocketStrict) {
+          if (endpoint === PRESENCE_OPS.STATUS) return presence.status(null)
+          if (endpoint === PRESENCE_OPS.TASKS) return presence.tasks()
+        }
         return pocketErr('auth-invalid', 'device authentication failed — re-pair the device')
       }
       switch (endpoint) {

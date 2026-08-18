@@ -28,6 +28,14 @@ reasonably quickly. If you can, avoid automated scans against running instances.
 - **Credential theft at rest** — only SHA-256 hashes are stored.
 - **Exposure on LAN/public** — the GUI keeps binding 127.0.0.1; only explicit
   forwarders (Tailscale IP, LAN IP) expose it, behind the trust fence + auth.
+- **Data corruption via non-UTF-8 remote writes** — the write path rejects
+  files that are not UTF-8 (UTF-16 BOM, GBK/ANSI bytes) and preserves the
+  UTF-8 BOM + dominant newline style (CRLF/LF) on write-back, so a remote
+  edit can never mangle an existing file's encoding.
+- **Unprotected read-only presence** — by default `/pocket` STATUS/TASKS are
+  readable without a credential (inside the browser-trust fence). Set
+  `pocketStrict: true` in `~/.dsh/remfs-options.json` to require a valid
+  device credential for every `/pocket` call.
 
 ## What it does NOT protect against (threat model)
 
@@ -39,7 +47,11 @@ reasonably quickly. If you can, avoid automated scans against running instances.
 - **Compromised host/PC** — if the PC itself is compromised, nothing in this
   plugin helps.
 - **Tailscale account compromise** — a device that joins your tailnet reaches
-  the harness; revoke devices and review tailnet membership regularly.
+  the harness; revoke devices and review tailnet membership regularly. Harden
+  the tailnet with a phone-only ACL on 443/3080 (see
+  [docs/tailscale-acls.md](docs/tailscale-acls.md)); even with `pocketStrict`
+  enabled the GUI `/api` itself stays unauthenticated, so keep untrusted
+  devices out of the tailnet entirely.
 - **Malicious workspace content** — an agent running in a workspace can do
   whatever the harness allows; workspace access grants agent execution.
 - **Time-of-check/time-of-use on the allowlist file** — the allowlist is read

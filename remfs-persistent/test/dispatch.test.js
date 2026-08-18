@@ -381,3 +381,95 @@ test('workspaces: filtered through the remfs capability boundary', async (t) => 
     assert.ok(!got.includes('ws-prot'), 'workspace under a protected path must be filtered: ' + got.join(','))
   } finally { await teardown(t, dir) }
 })
+
+// ------------------------------------------------------ data integrity: write
+// The write endpoint must never overwrite a file that is not UTF-8 (UTF-16
+// BOM / GBK-ANSI bytes) and must preserve the UTF-8 BOM + dominant newline
+// style of the original file on write-back.
+
+test('write guard: UTF-16 BOM and GBK/ANSI files are rejected, original untouched', async (t) => {
+  const { dir, root, handler, pair } = await setup()
+  try {
+    const A = await pair('device-a')
+    const base = { deviceId: A.deviceId, credential: A.credential }
+    const u16 = path.join(root, 'u16.txt')
+    const u16bytes = Buffer.from([0xff, 0xfe, 0x41, 0x00])
+    await fsp.writeFile(u16, u16bytes)
+    const r1 = await handler('write', { ...base, path: u16, content: 'new content' })
+    assert.equal(r1.ok, false)
+    assert.equal(r1.error.code, 'encoding-not-utf8')
+    const gbk = path.join(root, 'gbk.txt')
+    const gbkBytes = Buffer.from([0xc4, 0xe3, 0xba, 0xc3]) // GBK "ni hao"
+    await fsp.writeFile(gbk, gbkBytes)
+    const r2 = await handler('write', { ...base, path: gbk, content: 'new content' })
+    assert.equal(r2.ok, false)
+    assert.equal(r2.error.code, 'encoding-not-utf8')
+    // the original bytes must never be touched by a rejected write
+    assert.deepEqual(await fsp.readFile(u16), u16bytes)
+    assert.deepEqual(await fsp.readFile(gbk), gbkBytes)
+  } finally { await teardown(t, dir) }
+})
+
+test('write guard: UTF-8 BOM and CRLF style are preserved on write-back', async (t) => {
+  const { dir, root, handler, pair } = await setup()
+  try {
+    const A = await pair('device-a')
+    const base = { deviceId: A.deviceId, credential: A.credential }
+    const f = path.join(root, 'bom-crlf.txt')
+    await fsp.writeFile(f, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('line1\r\nline2\r\n')]))
+    const w = await handler('write', { ...base, path: f, content: 'edit1\nedit2' })
+    assert.equal(w.ok, true)
+    const bytes = await fsp.readFile(f)
+    assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'UTF-8 BOM must be preserved')
+    const text = bytes.toString('utf8').replace(/^\uFEFF/, '')
+    assert.equal(text, 'edit1\r\nedit2', 'CRLF style must be preserved (no doubled CRLF)')
+  } finally { await teardown(t, dir) }
+})
+
+test('write guard: LF files stay LF; new files get no BOM and no conversion', async (t) => {
+  const { dir, root, handler, pair } = await setup()
+  try {
+    const A = await pair('device-a')
+    const base = { deviceId: A.deviceId, credential: A.credential }
+    const lf = path.join(root, 'lf.txt')
+    await fsp.writeFile(lf, 'a\nb\n')
+    const w1 = await handler('write', { ...base, path: lf, content: 'x\ny' })
+    assert.equal(w1.ok, true)
+    assert.deepEqual(await fsp.readFile(lf), Buffer.from('x\ny'), 'LF style must be kept')
+
+    const fresh = path.join(root, 'fresh.txt')
+    const w2 = await handler('write', { ...base, path: fresh, content: 'plain\n' })
+    assert.equal(w2.ok, true)
+    assert.deepEqual(await fsp.readFile(fresh), Buffer.from('plain\n'), 'new file: no BOM, no conversion')
+  } finally { await teardown(t, dir) }
+})
+
+// ------------------------------------------------------------ junction escape
+// A real Windows junction pointing at a system directory (C:\Windows) must be
+// denied: fs.processPath's realpath semantics resolve the junction, so the
+// canonical path hits the HARD-deny segment / allowlist boundary. Junctions
+// need no admin on Windows; skipped on other platforms.
+
+test('junction escape: junction to C:\\Windows is denied (realpath semantics)', {
+  skip: process.platform !== 'win32' ? 'junctions are Windows-only' : false,
+}, async (t) => {
+  const { dir, root, handler, pair } = await setup()
+  try {
+    const A = await pair('device-a')
+    const base = { deviceId: A.deviceId, credential: A.credential }
+    const link = path.join(root, 'winlink')
+    await fsp.symlink('C:\\Windows', link, 'junction')
+    // the adapter's processPath (realpath) must resolve the junction to the
+    // system directory - this is the realpath semantic the deny relies on
+    const canonical = realpathSync(link)
+    assert.ok(canonical.toLowerCase().startsWith('c:\\windows'),
+      'junction must realpath to C:\\Windows, got: ' + canonical)
+    // dispatch must deny every access through the junction
+    const lst = await listCall(handler, { ...base, path: link })
+    assert.equal(lst.ok, false, 'listing through the junction must fail')
+    const rd = await handler('read', { ...base, path: path.join(link, 'win.ini') })
+    assert.equal(rd.ok, false, 'reading through the junction must fail')
+    assert.ok(['path-protected', 'path-outside-allowed'].includes(rd.error.code),
+      'escape must be denied with a capability code: ' + rd.error.code)
+  } finally { await teardown(t, dir) }
+})

@@ -93,13 +93,24 @@ test('host source: read-only presence works WITHOUT a device credential (PC brow
   // Dogfood fix: the PC browser never pairs, so the Orb stayed "Idle" — the
   // Orb/Board render inside the GUI's own browser-trust fence and the DTOs
   // expose only what the GUI already shows. Auth errors fall through to the
-  // read-only presence ops; everything else still fails closed.
+  // read-only presence ops; everything else still fails closed. The
+  // read-only fence can be disabled by ~/.dsh/remfs-options.json
+  // (pocketStrict:true), which makes EVERY /pocket call require a credential.
   const gate = HOST_SRC.slice(HOST_SRC.indexOf('const pocketHandler'))
   assert.match(gate, /authRes\.error\)\s*\{[\s\S]*?PRESENCE_OPS\.STATUS/,
-    'unauthorized requests must still serve presence.status')
+    'unauthorized requests must still serve presence.status (default)')
   assert.match(gate, /authRes\.error\)\s*\{[\s\S]*?PRESENCE_OPS\.TASKS/,
-    'unauthorized requests must still serve presence.tasks')
+    'unauthorized requests must still serve presence.tasks (default)')
   assert.match(gate, /auth-invalid/, 'non-presence unauthorized requests still fail closed')
+})
+
+test('host source: pocketStrict option (remfs-options.json) gates the read-only presence ops', () => {
+  assert.match(HOST_SRC, /readRemfsOptions\(\)/, 'host must read the operator options once at apply')
+  assert.match(HOST_SRC, /pocketStrict/, 'host must honor the pocketStrict switch')
+  const gate = HOST_SRC.slice(HOST_SRC.indexOf('const pocketHandler'))
+  assert.match(gate, /!remfsOptions\.pocketStrict/, 'read-only fallback must be conditional on !pocketStrict')
+  assert.match(gate, /remfsOptions\.pocketStrict[\s\S]*?auth-invalid/,
+    'strict mode must fall through to auth-invalid when no credential is present')
 })
 
 test('client source: presence handoff opens the EXISTING session (no replacement)', () => {
@@ -165,6 +176,22 @@ test('client source: revoke sends targetDeviceId (never { id })', () => {
     'client must send { targetDeviceId } for revoke')
   assert.doesNotMatch(CLIENT_SRC, /rpc\('revoke',\s*\{\s*id:/,
     'client must NOT send { id } for revoke')
+})
+
+// Data integrity: the upload path must inspect the RAW bytes (not
+// file.text(), which already mangles non-UTF-8) and refuse UTF-16 BOM /
+// GBK-ANSI content, keeping a UTF-8 BOM. The dispatcher rejects the same
+// files server-side with encoding-not-utf8, which the client maps to a
+// friendly message.
+test('client source: upload reads raw bytes and rejects non-UTF-8 (encoding guard)', () => {
+  assert.match(CLIENT_SRC, /file\.arrayBuffer\(\)/, 'upload must read the raw bytes, not file.text()')
+  assert.doesNotMatch(CLIENT_SRC, /file\.text\(\)\.then/, 'file.text() would mangle non-UTF-8 before detection')
+  assert.match(CLIENT_SRC, /encValidUtf8\(bytes\)/, 'client must validate the bytes as strict UTF-8')
+  assert.match(CLIENT_SRC, /encHasUtf16Bom\(bytes\)/, 'client must reject UTF-16 BOMs')
+  assert.match(CLIENT_SRC, /new TextDecoder\('utf-8',\s*\{\s*fatal:\s*true\s*\}\)/, 'strict UTF-8 decoder (fatal)')
+  assert.match(CLIENT_SRC, /encNotUtf8/, 'client must surface the non-UTF-8 message')
+  assert.match(CLIENT_SRC, /encoding-not-utf8/, 'client friendlyErr must map the dispatcher code')
+  assert.match(CLIENT_SRC, /encHasUtf8Bom\(bytes\)[\s\S]*?\\uFEFF/, 'a UTF-8 BOM must be preserved on upload')
 })
 
 async function setup() {

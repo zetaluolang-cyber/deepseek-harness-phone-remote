@@ -161,6 +161,31 @@ if (Test-Path $watchdogBin) {
     Write-Host "[!] watchdog.ps1 missing in $src - watchdog NOT registered" -ForegroundColor Yellow
 }
 
+# ---------- 3b. desktop shortcut (create or repair) ----------
+# %USERPROFILE%\Desktop\DeepSeek Harness.lnk -> start_harness.ps1, hidden,
+# no profile, bypass execution policy, working dir = Documents. CreateShortcut
+# on an EXISTING .lnk + Save() UPDATES its target/arguments in place, so
+# re-runs repair a stale or broken shortcut instead of duplicating it.
+$launcherPs1 = Join-Path $scriptDir "start_harness.ps1"
+if (Test-Path $launcherPs1) {
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $lnkPath = Join-Path $desktop "DeepSeek Harness.lnk"
+    try {
+        $wsShell = New-Object -ComObject WScript.Shell
+        $lnk = $wsShell.CreateShortcut($lnkPath)
+        $lnk.TargetPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+        $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcherPs1`""
+        $lnk.WorkingDirectory = $ws
+        $lnk.Description = "DeepSeek Harness phone remote"
+        $lnk.Save()
+        Write-Host "[OK] Desktop shortcut ready: $lnkPath" -ForegroundColor Green
+    } catch {
+        Write-Host "[!] Desktop shortcut could not be created: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "[!] start_harness.ps1 missing - desktop shortcut skipped" -ForegroundColor Yellow
+}
+
 $template = Join-Path $src "start_harness.template.ps1"
 if (Test-Path $template) {
     # Resolve the dsh entry DETERMINISTICALLY: several stale npx cache entries

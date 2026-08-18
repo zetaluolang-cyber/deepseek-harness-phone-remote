@@ -9,7 +9,7 @@ import {
   normPath, hasTraversal, isWithin, segmentsDenied, deniedPath, canSetRoots,
   ensurePairingCode, rotatePairingCode, pairDevice, verifyDevice, listDevices,
   revokeDevice, revokeAllDevices, parsePairingCode, formatPairingCode,
-  securityFile, buildCrumbs, deviceHasCapability,
+  securityFile, buildCrumbs, deviceHasCapability, readRemfsOptions,
 } from '../lib/security.js'
 
 const DOCS = path.join(os.homedir(), 'Documents')
@@ -435,4 +435,27 @@ test('device capability: legacy device (no capabilities field) gets all defaults
     assert.deepEqual(v.device.capabilities, ['files', 'approval'])
     assert.equal(deviceHasCapability(v.device, 'files'), true)
   } finally { await rm(path.dirname(f), { recursive: true, force: true }) }
+})
+
+test('remfs options: pocketStrict defaults OFF, fails closed on missing/corrupt files', async () => {
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises')
+  const os = await import('node:os')
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'remfs-opt-'))
+  try {
+    const file = path.join(dir, 'remfs-options.json')
+    // missing file -> default off
+    assert.deepEqual(readRemfsOptions(file), { pocketStrict: false })
+    // explicit on
+    await writeFile(file, JSON.stringify({ pocketStrict: true }), 'utf8')
+    assert.deepEqual(readRemfsOptions(file), { pocketStrict: true })
+    // explicit off
+    await writeFile(file, JSON.stringify({ pocketStrict: false }), 'utf8')
+    assert.deepEqual(readRemfsOptions(file), { pocketStrict: false })
+    // corrupt JSON -> fail closed to off
+    await writeFile(file, '{ not json', 'utf8')
+    assert.deepEqual(readRemfsOptions(file), { pocketStrict: false })
+    // unknown keys are ignored; truthy coercion is explicit
+    await writeFile(file, JSON.stringify({ other: 1, pocketStrict: 'yes' }), 'utf8')
+    assert.deepEqual(readRemfsOptions(file), { pocketStrict: true })
+  } finally { await rm(dir, { recursive: true, force: true }) }
 })

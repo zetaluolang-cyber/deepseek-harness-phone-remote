@@ -16,6 +16,7 @@
 // credential or double-consume a pairing code.
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile, rename, copyFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
@@ -67,6 +68,7 @@ export const ERR = {
   PATH_TRAVERSAL: 'path-traversal',
   PATH_PROTECTED: 'path-protected',
   PATH_OUTSIDE: 'path-outside-allowed',
+  ENCODING_NOT_UTF8: 'encoding-not-utf8',
 }
 
 // ------------------------------------------------------------------- paths
@@ -459,4 +461,28 @@ export async function revokeAllDevices(file = securityFile()) {
     await writePairingTxt(consumedTxt(pairingTxtFile(file), new Date().toISOString()))
     return { ok: true }
   })
+}
+
+// ----------------------------------------------------------------- options
+// Optional operator switches live in ~/.dsh/remfs-options.json (same directory
+// as remfs-security.json, never in the repo). Unknown/missing/corrupt values
+// fail closed to the DEFAULT (off). The host reads this once at apply time.
+export function optionsFile() {
+  return path.join(os.homedir(), '.dsh', 'remfs-options.json')
+}
+
+/**
+ * Read the operator options.
+ * @param {string} [file] - options file path (defaults to optionsFile()).
+ * @returns {{ pocketStrict: boolean }} - pocketStrict: when true, /pocket
+ *   STATUS/TASKS also require a valid device credential (default: false).
+ */
+export function readRemfsOptions(file = optionsFile()) {
+  let obj = null
+  try {
+    obj = JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return { pocketStrict: false }
+  }
+  return { pocketStrict: !!(obj && obj.pocketStrict) }
 }

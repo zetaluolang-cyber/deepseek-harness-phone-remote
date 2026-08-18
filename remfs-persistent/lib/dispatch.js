@@ -26,8 +26,16 @@ import {
   pairDevice, verifyDevice, listDevices, revokeDevice,
   revokeAllDevices, securityFile as defaultSecurityFile, ERR,
 } from './security.js'
+import {
+  hasUtf16Bom, hasUtf8Bom, isValidUtf8, dominantNewline,
+  applyNewlineStyle, withBom,
+} from './encoding.js'
 
 const MAX_BINARY = 5 * 1024 * 1024
+// Byte prefix probed on write to detect the original file's encoding, BOM and
+// newline style. BOMs live in the first bytes and a 64 KB prefix is a fair
+// sample of the dominant newline style without reading huge logs.
+const ENCODE_PROBE_BYTES = 64 * 1024
 
 const err = (code, message, details) => ({ ok: false, error: { code, message, details: details || {} } })
 
@@ -269,7 +277,24 @@ export function createDispatcher(adapter, opts = {}) {
           const wps = await workspaceRoots()
           if (deniedPath(canonical, wps)) return err(ERR.PATH_PROTECTED, 'path is protected')
           if (!isWithin(canonical, r.roots)) return err(ERR.PATH_OUTSIDE, 'path outside the allowed roots')
-          await adapter.writeText(target, content, adapter.policy())
+          // Data-integrity guard: never overwrite a file that is not UTF-8
+          // (UTF-16 BOM, or invalid UTF-8 sequences that indicate GBK/ANSI
+          // content) - the edit would corrupt it. A missing file (new upload)
+          // has nothing to guard. Existing UTF-8 BOM and the dominant newline
+          // style (CRLF/LF) are preserved on write-back.
+          let before = null
+          try {
+            before = await adapter.readBytes(target, ENCODE_PROBE_BYTES)
+          } catch { /* new file */ }
+          if (before && before.length > 0) {
+            if (hasUtf16Bom(before) || !isValidUtf8(before)) {
+              return err(ERR.ENCODING_NOT_UTF8, 'file is not UTF-8 - convert to UTF-8 and retry')
+            }
+          }
+          const nl = before ? dominantNewline(before) : null
+          const bom = before ? hasUtf8Bom(before) : false
+          const out = applyNewlineStyle(withBom(content, bom), nl)
+          await adapter.writeText(target, out, adapter.policy())
           return { ok: true, value: { path: canonical } }
         }
         default:

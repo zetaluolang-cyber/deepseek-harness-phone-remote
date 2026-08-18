@@ -173,6 +173,16 @@ window.__ModuleLoader__.load({
     // session/workspace lists (big persisted logs bloat harness memory).
     const ARCHIVE_HINT_BYTES = 10 * 1024 * 1024
 
+    // Data-integrity: the browser client inlines the encoding checks because
+    // it cannot import lib/encoding.js (browser bundle). Mirrors that module
+    // exactly: reject UTF-16 BOMs and invalid UTF-8 (GBK/ANSI) uploads before
+    // they can write, preserve a UTF-8 BOM.
+    const encHasUtf16Bom = (b) => b && b.length >= 2 && ((b[0] === 0xFF && b[1] === 0xFE) || (b[0] === 0xFE && b[1] === 0xFF))
+    const encHasUtf8Bom = (b) => b && b.length >= 3 && b[0] === 0xEF && b[1] === 0xBB && b[2] === 0xBF
+    const encValidUtf8 = (b) => {
+      try { new TextDecoder('utf-8', { fatal: true }).decode(b); return true } catch { return false }
+    }
+
     const ext = (name) => {
       const i = name.lastIndexOf('.')
       return i < 0 ? '' : name.slice(i + 1).toLowerCase()
@@ -224,7 +234,8 @@ window.__ModuleLoader__.load({
         devicesTitle: '已配对设备', revokeBtn: '吊销', revokeAllBtn: '吊销全部',
         revokedToast: '✅ 已吊销', noDevices: '暂无设备', devMgmt: '🔐 设备管理',
         rootOutside: '新增目录必须在已批准目录内——在电脑上编辑 .remfs-roots.json 添加新位置',
-        authFailed: '设备未授权,请重新配对'
+        authFailed: '设备未授权,请重新配对',
+        encNotUtf8: '检测到非 UTF-8 编码,请转为 UTF-8 后重试'
       },
       en: {
         tabSession: '＋ New Session', tabFiles: '📁 Files',
@@ -263,7 +274,8 @@ window.__ModuleLoader__.load({
         devicesTitle: 'Paired devices', revokeBtn: 'Revoke', revokeAllBtn: 'Revoke all',
         revokedToast: '✅ Revoked', noDevices: 'No devices', devMgmt: '🔐 Devices',
         rootOutside: 'New roots must stay inside approved roots — edit .remfs-roots.json on the PC to add new locations',
-        authFailed: 'Device not authorized — please pair again'
+        authFailed: 'Device not authorized — please pair again',
+        encNotUtf8: 'Non-UTF-8 encoding detected — convert to UTF-8 and retry'
       }
     }
 
@@ -313,6 +325,7 @@ window.__ModuleLoader__.load({
 
     const friendlyErr = (msg, code) => {
       const s = String(msg || '')
+      if (code === 'encoding-not-utf8') return { lock: false, text: t('encNotUtf8') }
       if (code === 'root-outside-approved') return { lock: false, text: t('rootOutside') }
       if (code === 'auth-required' || code === 'auth-invalid') return { lock: true, text: t('authFailed') }
       if (/denied|EACCES|EPERM/i.test(s)) return { lock: true, text: t('lockDenied') }
@@ -789,7 +802,19 @@ window.__ModuleLoader__.load({
 
       const upload = (file) => {
         if (!file) return
-        file.text().then((text) => {
+        // Read the RAW bytes so non-UTF-8 uploads (UTF-16 BOM, GBK/ANSI byte
+        // sequences) can be rejected BEFORE they write; file.text() would have
+        // already mangled them into replacement chars. A UTF-8 BOM is kept.
+        file.arrayBuffer().then((buf) => {
+          const bytes = new Uint8Array(buf)
+          if (encHasUtf16Bom(bytes) || !encValidUtf8(bytes)) {
+            const fe = { lock: false, text: t('encNotUtf8') }
+            setError(fe)
+            showToast('❌ ' + fe.text, 'error')
+            return
+          }
+          let text = new TextDecoder('utf-8').decode(bytes)
+          if (encHasUtf8Bom(bytes)) text = '\uFEFF' + text
           rpc('write', { path: join(path, file.name), content: text }).then((r) => {
             if (r && r.ok) { load(path); showToast(t('uploadedToast') + file.name, 'success') }
             else {

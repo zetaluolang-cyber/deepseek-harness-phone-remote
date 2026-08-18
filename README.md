@@ -105,8 +105,19 @@ authentication. Pairing and the filesystem capability layer are.
 - **Path escape is defended twice**: raw paths with `..`/UNC are rejected, and
   the canonical realpath must stay inside the allowlist (symlink/junction
   escapes fail).
+- **Remote writes are encoding-guarded**: uploading or editing a file that is
+  not UTF-8 (UTF-16 BOM, GBK/ANSI byte sequences) is rejected instead of
+  corrupting it, and the UTF-8 BOM + dominant newline style (CRLF/LF) of an
+  edited file are preserved on write-back.
+- **The presence read-only fence is an operator switch**: by default the
+  Orb/Task Board work unauthenticated inside the browser-trust fence; setting
+  `pocketStrict: true` in `~/.dsh/remfs-options.json` requires a valid device
+  credential for every `/pocket` call.
+- **Tailscale ACLs should be hardened** to phone-only access on 443/3080 — see
+  [docs/tailscale-acls.md](docs/tailscale-acls.md).
 - See [SECURITY.md](SECURITY.md) for the full threat model (what we do and do
-  not protect).
+  not protect), and [docs/upgrade.md](docs/upgrade.md) for the pre-upgrade
+  backup + verification checklist.
 
 ## Positioning
 
@@ -205,8 +216,14 @@ tight), a compromised host, or a compromised Tailscale account. Details in
 - [x] Device pairing + credential auth + revocation
 - [x] Capability-bounded allowlist + protected paths + path-escape tests
 - [x] Bilingual UI, security tests, CI
+- [x] Startup quarantine of corrupt demo sessions + self-healing watchdog
+- [x] Session size hints + "suggest archiving" in the phone UI
+- [x] Demo-presence behavior tests (idempotent add, fixed cwd, clean-only-demos)
+- [x] UTF-8 encoding guard on upload/edit + BOM/newline preservation
+- [x] /pocket strict mode (opt-in via `~/.dsh/remfs-options.json`)
+- [x] Tailscale ACL hardening guide
+- [x] Desktop shortcut automation (install.ps1)
 - [ ] More device resolutions validation
-- [ ] Tailscale ACL hardening guide
 - [ ] Upstream contributions (see below)
 
 ## License
