@@ -19,3 +19,6 @@ keep_awake.pid
 .DS_Store
 Thumbs.db
 node_modules/
+
+# test temp dirs
+.tmp-*/
