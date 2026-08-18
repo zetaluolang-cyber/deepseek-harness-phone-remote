@@ -2,6 +2,23 @@
 
 All notable changes to `@zetaluolang/remfs-persistent` and the deploy package.
 
+## [1.2.1] — 2026-08 (presence-orb UX polish)
+
+- **Calm by default** — the Orb no longer glows/bobs permanently: IDLE / DONE /
+  DISCONNECTED render as a quiet, dimmed ball; only NEEDS_USER / FAILED get the
+  breathing glow (+ bobbing whale), and RUNNING keeps its dashed spin ring.
+  `prefers-reduced-motion` still disables everything.
+- **Position persistence** — the drag position is saved to `localStorage`
+  (`remfs-orb-pos`) and restored on reload; the ball stays where the user put
+  it instead of snapping back over the composer.
+- **First-run hint** — the Quick Peek opens once on first load so the ball
+  explains itself; dismissed by the next click.
+- **Title privacy by default** — task titles and summaries (user content) are
+  shown only to paired devices; an unpaired viewer sees state + icon + "Pair to
+  view task details" in the peek, the board, and the ball tooltip.
+- **Faster task access** — the Quick Peek title is now clickable (paired only)
+  and opens the existing session directly.
+
 ## [1.2.0] — 2026-08 (self-healing + data-integrity release)
 
 - **Self-healing watchdog** — scheduled task (`dsh_harness_watchdog`, every 5

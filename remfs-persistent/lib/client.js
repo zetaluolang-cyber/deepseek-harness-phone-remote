@@ -98,8 +98,11 @@ window.__ModuleLoader__.load({
    peek. All pure CSS; prefers-reduced-motion disables them. */
 .remfs-orbwrap{position:fixed;right:16px;bottom:16px;z-index:1500;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none}
 .remfs-orbwrap.drag{cursor:grabbing}
-.remfs-orb{width:46px;height:46px;border-radius:50%;border:2px solid rgba(128,128,128,.5);background:linear-gradient(145deg,#7b96ff 0%,#4a6cf7 50%,#2c4bd6 100%);color:#fff;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;box-shadow:0 0 12px var(--orb-glow,rgba(74,108,247,.55)),0 6px 20px rgba(47,79,216,.45);transition:transform .12s;position:relative;animation:remfs-glow 2.8s ease-in-out infinite}
+.remfs-orbwrap.quiet{opacity:.72}
+.remfs-orbwrap.quiet .remfs-orb-logo{animation:none}
+.remfs-orb{width:46px;height:46px;border-radius:50%;border:2px solid rgba(128,128,128,.5);background:linear-gradient(145deg,#7b96ff 0%,#4a6cf7 50%,#2c4bd6 100%);color:#fff;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;box-shadow:0 0 12px var(--orb-glow,rgba(74,108,247,.55)),0 6px 20px rgba(47,79,216,.45);transition:transform .12s, box-shadow .3s;position:relative}
 .remfs-orb:hover{transform:scale(1.06)}
+.remfs-orb.alert{animation:remfs-glow 1.6s ease-in-out infinite}
 .remfs-orb.running::before{content:'';position:absolute;inset:-6px;border-radius:50%;border:2px dashed var(--orb-glow,#4a6cf7);opacity:.65;animation:remfs-spin 7s linear infinite;pointer-events:none}
 @keyframes remfs-glow{0%,100%{box-shadow:0 0 8px var(--orb-glow,rgba(74,108,247,.45)),0 6px 20px rgba(47,79,216,.45)}50%{box-shadow:0 0 18px var(--orb-glow,rgba(74,108,247,.85)),0 6px 20px rgba(47,79,216,.5)}}
 @keyframes remfs-spin{to{transform:rotate(360deg)}}
@@ -107,7 +110,8 @@ window.__ModuleLoader__.load({
 @keyframes remfs-pop{from{transform:scale(.3)}to{transform:scale(1)}}
 @keyframes remfs-fade-up{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @media (prefers-reduced-motion: reduce){.remfs-orb,.remfs-orb.running::before,.remfs-orb-logo,.remfs-orb-badge,.remfs-peek{animation:none}}
-.remfs-orb-logo{width:26px;height:26px;fill:#fff;pointer-events:none;animation:remfs-bob 2.6s ease-in-out infinite}
+.remfs-orb-logo{width:26px;height:26px;fill:#fff;pointer-events:none}
+.remfs-orb.alert .remfs-orb-logo{animation:remfs-bob 2.6s ease-in-out infinite}
 .remfs-orb-badge{position:absolute;top:-5px;right:-5px;width:18px;height:18px;border-radius:50%;background:#fff;color:#16181d;font-size:11px;font-weight:800;line-height:1;display:flex;align-items:center;justify-content:center;border:1.5px solid rgba(22,24,29,.18);box-shadow:0 2px 6px rgba(0,0,0,.35);pointer-events:none;animation:remfs-pop .25s cubic-bezier(.2,1.6,.4,1)}
 .remfs-orb-tag{font-size:10px;color:var(--dsw-alias-label-primary,#eee);background:rgba(20,20,24,.82);padding:1px 8px;border-radius:999px;pointer-events:none;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .remfs-peek{position:fixed;right:16px;bottom:76px;z-index:1510;width:min(320px,92vw);background:var(--dsw-specific-sidebar-fill,#202024);border:1px solid rgba(128,128,128,.3);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px;box-shadow:0 8px 28px rgba(0,0,0,.45);animation:remfs-fade-up .18s ease-out}
@@ -201,7 +205,7 @@ window.__ModuleLoader__.load({
         tabSession: '＋ 新建会话', tabFiles: '📁 文件浏览',
         headSession: '新建会话', headFiles: '文件浏览',
         close: '✕ 关闭', loading: '加载中…',
-        orbTitle: 'Agent 状态', orbTasks: '任务', orbOpen: '打开',
+        orbTitle: 'Agent 状态', orbTasks: '任务', orbOpen: '打开', orbLockedTitle: '配对后可查看任务详情',
         orbPeekTitle: '任务进展', orbLastProg: '上次推进', orbNoTask: '无任务',
         boardTitle: 'Agent 任务', boardNeedsYou: '需要你', boardRunning: '运行中', boardNotStarted: '未开始', boardDone: '已完成', boardFailed: '失败',
         boardStalled: '可能停滞', boardOpen: '打开', boardEmpty: '暂无任务', boardLoadFail: '任务加载失败',
@@ -241,7 +245,7 @@ window.__ModuleLoader__.load({
         tabSession: '＋ New Session', tabFiles: '📁 Files',
         headSession: 'New Session', headFiles: 'Files',
         close: '✕ Close', loading: 'Loading…',
-        orbTitle: 'Agent presence', orbTasks: 'Tasks', orbOpen: 'Open',
+        orbTitle: 'Agent presence', orbTasks: 'Tasks', orbOpen: 'Open', orbLockedTitle: 'Pair to view task details',
         orbPeekTitle: 'Task progress', orbLastProg: 'Last progress', orbNoTask: 'No tasks',
         boardTitle: 'Agent tasks', boardNeedsYou: 'Needs You', boardRunning: 'Running', boardNotStarted: 'Not Started', boardDone: 'Done', boardFailed: 'Failed',
         boardStalled: 'Possibly stalled', boardOpen: 'Open', boardEmpty: 'No tasks', boardLoadFail: 'Failed to load tasks',
@@ -437,7 +441,20 @@ window.__ModuleLoader__.load({
       const [peekOpen, setPeekOpen] = React.useState(false)
       const [notified, setNotified] = React.useState({}) // state-per-session notification dedup
       const [lastOrb, setLastOrb] = React.useState(null)
-      const [pos, setPos] = React.useState(null) // {x,y} after drag; null = default corner
+      const [pos, setPos] = React.useState(() => {
+        try {
+          const raw = window.localStorage.getItem('remfs-orb-pos')
+          if (raw) {
+            const p = JSON.parse(raw)
+            if (p && typeof p.x === 'number' && typeof p.y === 'number') return { x: p.x, y: p.y }
+          }
+        } catch { /* ignore */ }
+        return null
+      }) // {x,y} after drag; null = default corner
+      const posRef = React.useRef(null)
+      const [firstRun, setFirstRun] = React.useState(() => {
+        try { return window.localStorage.getItem('remfs-orb-hint') !== '1' } catch { return false }
+      })
       const dragRef = React.useRef(null)
       const draggedRef = React.useRef(false)
 
@@ -476,6 +493,13 @@ window.__ModuleLoader__.load({
         const h = setInterval(refresh, 8000)
         return () => { try { clearInterval(h) } catch { /* ignore */ } }
       }, [])
+      React.useEffect(() => {
+        // first-run hint: open the peek once so the ball explains itself.
+        if (firstRun) {
+          setPeekOpen(true)
+          try { window.localStorage.setItem('remfs-orb-hint', '1') } catch { /* ignore */ }
+        }
+      }, [])
 
       const onPointerDown = (e) => {
         draggedRef.current = false
@@ -494,16 +518,26 @@ window.__ModuleLoader__.load({
         const vh = (window.innerHeight || 0)
         const x = Math.min(Math.max(4, rect.left + dx), Math.max(4, vw - rect.width - 4))
         const y = Math.min(Math.max(4, rect.top + dy), Math.max(4, vh - rect.height - 4))
-        setPos({ x, y })
+        const next = { x, y }
+        posRef.current = next
+        setPos(next)
         d.x = e.clientX
         d.y = e.clientY
       }
       const onPointerUp = () => {
+        if (draggedRef.current && posRef.current) {
+          try { window.localStorage.setItem('remfs-orb-pos', JSON.stringify(posRef.current)) } catch { /* ignore */ }
+        }
         dragRef.current = null
       }
 
       const orb = orbStateLocal(lastOrb)
       const qp = quickPeekLocal(lastOrb)
+      const paired = getCred() !== null
+      const orbQuiet = orb.state === P_IDLE || orb.state === P_DONE || orb.state === P_DISC
+      const orbAlert = orb.state === P_NEEDS || orb.state === P_FAILED
+      const displayTitle = paired ? (qp.title || t('orbNoTask')) : t('orbLockedTitle')
+      const displaySummary = paired ? qp.summary : null
       const wrapStyle = pos ? { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' } : null
       const peekStyle = pos
         ? { left: Math.max(8, Math.min(pos.x - 160, (window.innerWidth || 0) - 328)), top: Math.max(8, pos.y - 230), right: 'auto', bottom: 'auto' }
@@ -511,7 +545,7 @@ window.__ModuleLoader__.load({
 
       return React.createElement(React.Fragment, null,
         React.createElement('div', {
-          className: 'remfs-orbwrap' + (draggedRef.current ? ' drag' : ''),
+          className: 'remfs-orbwrap' + (draggedRef.current ? ' drag' : '') + (orbQuiet ? ' quiet' : ''),
           style: wrapStyle,
           onPointerDown,
           onPointerMove,
@@ -519,8 +553,8 @@ window.__ModuleLoader__.load({
           onPointerCancel: onPointerUp,
         },
           React.createElement('button', {
-            className: 'remfs-orb' + (orb.state === P_RUNNING ? ' running' : ''),
-            title: t('orbTitle') + ': ' + orb.text + (orb.title ? ' — ' + orb.title : ''),
+            className: 'remfs-orb' + (orb.state === P_RUNNING ? ' running' : '') + (orbAlert ? ' alert' : ''),
+            title: t('orbTitle') + ': ' + orb.text + (paired && orb.title ? ' — ' + orb.title : ''),
             style: { borderColor: orb.color, '--orb-glow': orb.color },
             onClick: () => {
               if (draggedRef.current) { draggedRef.current = false; return }
@@ -536,8 +570,13 @@ window.__ModuleLoader__.load({
         ),
         peekOpen ? React.createElement('div', { className: 'remfs-peek', style: peekStyle },
           React.createElement('div', { className: 'remfs-peek-state', style: { color: orb.color } }, qp.icon + ' ' + qp.text),
-          React.createElement('div', { className: 'remfs-peek-title' }, qp.title || t('orbNoTask')),
-          qp.summary ? React.createElement('div', { className: 'remfs-peek-summary' }, qp.summary) : null,
+          React.createElement('div', {
+            className: 'remfs-peek-title',
+            style: qp.taskId && paired ? { cursor: 'pointer', color: 'var(--dsw-alias-interactive,#4a6cf7)' } : undefined,
+            title: qp.taskId && paired ? t('orbOpen') : undefined,
+            onClick: () => { if (qp.taskId && paired) { openSession(qp.taskId); setPeekOpen(false) } }
+          }, displayTitle),
+          displaySummary ? React.createElement('div', { className: 'remfs-peek-summary' }, displaySummary) : null,
           qp.staleReason && qp.staleReason.length > 0
             ? React.createElement('div', { className: 'remfs-peek-reasons' }, qp.staleReason.map((r, i) => React.createElement('div', { key: i }, '· ' + r)))
             : null,
@@ -550,7 +589,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function PresenceBoard({ conn, sessionsApi, onClose }) {
+    function PresenceBoard({ conn, sessionsApi, onClose, paired }) {
       const [tasks, setTasks] = React.useState([])
       const [loading, setLoading] = React.useState(true)
       const [err, setErr] = React.useState(null)
@@ -580,14 +619,14 @@ window.__ModuleLoader__.load({
           React.createElement('div', { className: 'remfs-sec' }, t(labelKey) + ' (' + items.length + ')'),
           items.map((task) => React.createElement('div', { key: task.sessionId, className: 'remfs-card' + (task.stalled ? ' stalled' : '') },
             React.createElement('div', { className: 'row' },
-              React.createElement('div', { className: 'tt' }, (task.stalled ? '◐ ' : '') + (task.title || task.sessionId)),
+              React.createElement('div', { className: 'tt' }, (task.stalled ? '◐ ' : '') + (paired ? (task.title || task.sessionId) : t('orbLockedTitle'))),
               React.createElement('button', { className: 'remfs-open', onClick: () => openSession(task.sessionId) }, t('boardOpen'))
             ),
             task.sizeBytes > 0
               ? React.createElement('div', { className: 'sz' + (task.sizeBytes > ARCHIVE_HINT_BYTES ? ' warn' : '') },
                   '📦 ' + fmtSize(task.sizeBytes) + (task.sizeBytes > ARCHIVE_HINT_BYTES ? ' · ' + t('sessSizeWarn') : ''))
               : null,
-            task.summary ? React.createElement('div', { className: 'la' }, task.summary) : null,
+            paired && task.summary ? React.createElement('div', { className: 'la' }, task.summary) : null,
             task.staleReason && task.staleReason.length > 0
               ? React.createElement('div', { className: 'remfs-card-stale' }, task.staleReason[0])
               : null
@@ -628,7 +667,7 @@ window.__ModuleLoader__.load({
       if (!boardOpen) return null
       return React.createElement(React.Fragment, null,
         React.createElement('div', { className: 'remfs-backdrop', onClick: () => setBoardOpen(false) }),
-        React.createElement(PresenceBoard, { conn, sessionsApi: window.__remfsSessionsApi, onClose: () => setBoardOpen(false) })
+        React.createElement(PresenceBoard, { conn, sessionsApi: window.__remfsSessionsApi, onClose: () => setBoardOpen(false), paired: getCred() !== null })
       )
     }
 
