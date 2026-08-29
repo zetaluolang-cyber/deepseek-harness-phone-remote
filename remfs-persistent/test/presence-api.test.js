@@ -51,7 +51,7 @@ test('presence api v1: the 7-state model and priority order are frozen', () => {
 test('presence api v1: every error code the implementation can emit is in ERROR_CODES', () => {
   const codes = new Set(Object.values(ERROR_CODES))
   // scan the implementation for hard-coded error codes (service + host pocket layer)
-  const files = ['../lib/presence/service.js', '../lib/host.js']
+  const files = ['../lib/presence/service.js', '../lib/presence/pocket.js', '../lib/host.js']
   const used = new Set()
   for (const f of files) {
     const src = fs.readFileSync(path.join(HERE, f), 'utf8')
@@ -63,12 +63,11 @@ test('presence api v1: every error code the implementation can emit is in ERROR_
   for (const c of used) {
     assert.ok(codes.has(c), 'implementation uses error code "' + c + '" but ERROR_CODES does not define it')
   }
-  // capability-denied is a frozen legacy code: the cockpit capability gate
-  // was removed with the cockpit feature; the code stays in the v1
-  // vocabulary (never emitted) so existing consumers keep parsing.
-  const frozenLegacy = new Set(['capability-denied'])
+  // capability-denied came back into service: it was reserved when the
+  // cockpit gate was removed, and pocket.js now emits it for push ops on a
+  // device narrowed away from `files`. No exemptions left.
   for (const c of codes) {
-    assert.ok(used.has(c) || frozenLegacy.has(c),
+    assert.ok(used.has(c),
       'ERROR_CODES lists "' + c + '" but no implementation site uses it')
   }
 })

@@ -23,9 +23,11 @@ reasonably quickly. If you can, avoid automated scans against running instances.
 - **Unauthenticated remote RPC** — `/remfs` requires a per-device credential;
   pairing is one-time and time-limited.
 - **Over-broad paired-device authority** — `/remfs` enforces `files` on
-  filesystem/workspace operations and `device-admin` on device management.
-  New devices receive both for backward-compatible behavior; remote clients
-  cannot grant capabilities. To narrow a device, edit its entry in
+  filesystem/workspace operations and `device-admin` on device management;
+  `/pocket` push subscribe/unsubscribe also require `files` (push payloads
+  carry task titles/summaries — content strictly weaker than what `files`
+  already grants). New devices receive both capabilities for
+  backward-compatible behavior; remote clients cannot grant capabilities. To narrow a device, edit its entry in
   `%USERPROFILE%\.dsh\remfs-security.json` **while the harness is stopped**
   (the host process is the single writer) and remove capabilities from its
   list, e.g. a browse-only device:

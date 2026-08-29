@@ -931,7 +931,7 @@ window.__ModuleLoader__.load({
       const onTogglePush = (on) => {
         if (on) {
           setPushEnabledFlag(true)
-          const doSubscribe = () => { ensurePushSubscription(conn, pushReg).then((r) => { if (r && !r.ok) showToast(t('pushEnableErr'), 'error') }) }
+          const doSubscribe = () => { ensurePushSubscription(conn, pushReg).then((r) => { if (r && !r.ok) showToast(r.error && r.error.code === 'capability-denied' ? t('capDenied') : t('pushEnableErr'), 'error') }) }
           if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
             Notification.requestPermission().then((p) => {
               if (p === 'granted') doSubscribe()

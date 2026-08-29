@@ -4,6 +4,11 @@ All notable changes to `@zetaluolang/remfs-persistent` and the deploy package.
 
 ## Unreleased
 
+- **/pocket capability gate** — `push.subscribe`/`push.unsubscribe` now
+  require the `files` capability (pushes carry task titles/summaries); denial
+  uses the frozen `capability-denied` code. The /pocket dispatcher moved to
+  `lib/presence/pocket.js` and its authorization rules (read-only fence,
+  pocketStrict, capability gate) are unit-tested for the first time.
 - **Capability enforcement** — `/remfs` now requires `files` for filesystem and
   workspace operations and `device-admin` for paired-device management. The
   obsolete persisted `approval` capability migrates in memory to
