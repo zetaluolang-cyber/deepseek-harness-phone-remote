@@ -42,6 +42,19 @@ export function createPushController(deps) {
   let timer = null
   let running = false
   let lastPrune = 0
+  // Cached task snapshot: presence.tasks() decompresses every persisted
+  // session log (zstd) and can take tens of seconds with real data, so the
+  // dispatcher refreshes this snapshot once per cycle and the HTTP presence
+  // route serves the CACHE instead of re-scanning per request.
+  let lastSnapshot = null
+
+  /**
+   * The most recent successful task snapshot (or null before the first
+   * cycle completes). Shape: { ok: true, value: { tasks, orb } }.
+   */
+  function snapshot() {
+    return lastSnapshot
+  }
 
   /** Run one dispatch cycle (exported for tests). */
   async function tick(now = Date.now()) {
@@ -49,6 +62,9 @@ export function createPushController(deps) {
     running = true
     try {
       const r = await tasks()
+      if (r && r.ok && r.value) {
+        lastSnapshot = { ok: true, value: r.value, cachedAt: new Date().toISOString() }
+      }
       if (!(r && r.ok) || !r.value || !Array.isArray(r.value.tasks)) return { skipped: false, pushed: 0 }
       const vapid = await store.ensureVapid()
       const subject = await store.subjectOf()
@@ -130,5 +146,5 @@ export function createPushController(deps) {
     }
   }
 
-  return { start, stop, tick, intervalMs }
+  return { start, stop, tick, intervalMs, snapshot }
 }

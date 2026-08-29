@@ -274,7 +274,13 @@ export default {
     const webServer = ctx.get('webServer')
     if (webServer && typeof webServer.register === 'function') {
       const handlers = createHttpHandlers({
-        tasks: () => presence.tasks(),
+        // Serve the dispatcher's cached snapshot (refreshed each cycle) so the
+        // PC orb widget never triggers a full presence re-scan; fall back to a
+        // live scan only before the first cycle completes.
+        tasks: async () => {
+          const snap = pushController.snapshot()
+          return snap || presence.tasks()
+        },
         verifyDevice,
         pocketStrict: remfsOptions.pocketStrict,
         vapidPublic: () => pushStore.vapidPublic(),
