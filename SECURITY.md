@@ -22,12 +22,29 @@ reasonably quickly. If you can, avoid automated scans against running instances.
 
 - **Unauthenticated remote RPC** — `/remfs` requires a per-device credential;
   pairing is one-time and time-limited.
+- **Over-broad paired-device authority** — `/remfs` enforces `files` on
+  filesystem/workspace operations and `device-admin` on device management.
+  New devices receive both for backward-compatible behavior; remote clients
+  cannot grant capabilities. To narrow a device, edit its entry in
+  `%USERPROFILE%\.dsh\remfs-security.json` **while the harness is stopped**
+  (the host process is the single writer) and remove capabilities from its
+  list, e.g. a browse-only device:
+
+  ```json
+  { "id": "…", "name": "old-tablet", "capabilities": ["files"] }
+  ```
+
+  An empty list (`[]`) locks the device out of every capability-gated endpoint
+  while keeping it paired. Deleting the `capabilities` field entirely restores
+  the defaults (legacy migration).
 - **Remote allowlist widening** — a client can never add `C:\` or unrelated
   roots over the wire; that requires PC-local config edits.
 - **Path escape** — `..`, UNC, symlink/junction escapes are rejected/checked.
 - **Credential theft at rest** — only SHA-256 hashes are stored.
-- **Exposure on LAN/public** — the GUI keeps binding 127.0.0.1; only explicit
-  forwarders (Tailscale IP, LAN IP) expose it, behind the trust fence + auth.
+- **Accidental wildcard-interface exposure** — the GUI keeps binding 127.0.0.1;
+  only explicit forwarders expose selected Tailscale/LAN addresses. Plugin RPC
+  is then protected by the trust fence and device auth; the native GUI `/api`
+  limitation below still applies.
 - **Data corruption via non-UTF-8 remote writes** — the write path rejects
   files that are not UTF-8 (UTF-16 BOM, GBK/ANSI bytes) and preserves the
   UTF-8 BOM + dominant newline style (CRLF/LF) on write-back, so a remote

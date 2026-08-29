@@ -31,7 +31,8 @@ every JavaScript file under `lib/`, and parses the PowerShell deploy scripts.
 
 - The package is a Cordis **loader entry**: `dsh plugin --profile web add
   @zetaluolang/remfs-persistent` installs it; the loader row in
-  `cordis.patch.yml` carries `inject: [connection, fs]` (required).
+  `cordis.patch.yml` carries
+  `inject: [connection, fs, sandboxPolicy, workspaceRegistry]` (required).
 - `package.json`'s `dsh.client` manifest registers the client module (served at
   `/plugins/<id>/client.js`, loaded on every page).
 

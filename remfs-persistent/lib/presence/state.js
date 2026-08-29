@@ -51,14 +51,14 @@ export function resolveState(f, staleReasons = []) {
 /**
  * Lifecycle guard (design §21). This implements exactly ONE rule:
  *
- *   a task that is already DONE or FAILED must not silently report RUNNING
- *   again — terminal states only leave via a new task, which upstream would
- *   surface as a new taskId.
+ *   an observation already recorded as DONE or FAILED must not silently
+ *   report RUNNING again.
  *
- * Every other transition is accepted as-is, including the STALE → RUNNING
- * recovery path. We do not track task identity across completions yet, so a
- * stricter legality matrix would clamp states we cannot actually distinguish
- * from a legitimate new task. The narrow rule is deliberate, not a stub.
+ * Every other transition is accepted as-is, including STALE → RUNNING.
+ * Presence service state is keyed by session, not by turn/task identity; that
+ * service separately treats a freshly opened turn as new intent before calling
+ * this guard. A stricter matrix here would clamp states this function cannot
+ * distinguish from legitimate recovery. The narrow rule is deliberate.
  *
  * @param {string} prev - previous STATE (falsy on first observation).
  * @param {string} next - resolved STATE.

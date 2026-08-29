@@ -46,7 +46,7 @@ git graph, SSH remote ops, image understanding, live token stats.
 | Axis | dsh-web-ui | this project |
 |---|---|---|
 | Mobile experience | **replacement UI** (its own mobile frontend) | **native DSH web UI** kept, workbench bridge only |
-| Pairing / device auth | yes (QR, one-time token, revoke) | **planned** (this audit's follow-up) |
+| Pairing / device auth | yes (QR, one-time token, revoke) | **implemented** (one-time code, per-device credential, revoke/revoke-all) |
 | File management | desktop right-panel file tree | phone-side filesystem bridge (browse/edit/upload/download) |
 | Workspace control | sessions + messages | start/resume agent in any folder, manage workspaces |
 | Network | LAN QR + cloudflared | Tailscale (HTTPS + IP) |
@@ -61,9 +61,11 @@ git graph, SSH remote ops, image understanding, live token stats.
 
 ## 6. Most valuable next investments
 
-1. **Real RPC authentication** — pairing token → per-device credential →
-   revocation (today the boundary is only trusted-host).
-2. **Filesystem capability model** — allowlist as the primary boundary, remote
-   roots cannot be widened, traversal/symlink/UNC hardening, tests.
-3. **Remote workspace ergonomics** — keep the native UI while making
-   session start/resume + file operations feel first-class remotely.
+1. **Native `/api` boundary** — pairing protects this plugin's RPC surfaces,
+   not the upstream Harness API. Keep transport access narrow and pursue an
+   upstream authentication seam rather than implying the plugin can wrap it.
+2. **Automated browser compatibility** — add a small real-browser smoke suite
+   for upstream selector and mobile interaction changes; source-contract tests
+   alone cannot prove runtime integration.
+3. **Client modularity** — split authentication, push, presence and file UI out
+   of the single client module before adding another major feature area.

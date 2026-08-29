@@ -4,10 +4,20 @@ All notable changes to `@zetaluolang/remfs-persistent` and the deploy package.
 
 ## Unreleased
 
+- **Capability enforcement** — `/remfs` now requires `files` for filesystem and
+  workspace operations and `device-admin` for paired-device management. The
+  obsolete persisted `approval` capability migrates in memory to
+  `device-admin`; existing default behavior is preserved.
 - **Complete CI discovery** — both Linux and Windows run every automatically
   discovered Node test and syntax-check every JavaScript module under `lib/`,
   including Web Push encryption/store tests that the old hand-written list
   omitted.
+- **Release/documentation hygiene** — manual loader instructions now carry all
+  four required injected services, the architecture audit reflects implemented
+  pairing, the native `/api` boundary is prominent, and the MIT license text is
+  included.
+- **Auth-store write guard** — the throttled `lastSeen` path now has a real
+  no-write assertion and self-heals future timestamps after clock rollback.
 
 ## [1.3.1] — 2026-08 (orb polish + instant presence)
 

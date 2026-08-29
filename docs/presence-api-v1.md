@@ -78,7 +78,7 @@ STALE 是**可解释的观察事实**,不断言死锁;理由在 `staleReason` �
     "apiVersion": "v1",
     "staleMinutes": 20,
     "serverTime": "2026-08-17T00:00:00.000Z",
-    "capabilities": ["files", "approval"]
+    "capabilities": ["files", "device-admin"]
   }
 }
 ```

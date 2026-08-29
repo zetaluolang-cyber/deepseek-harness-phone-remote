@@ -22,6 +22,13 @@ Task Board and notifications.
 > can't close remotely — authenticated file/workspace access and Agent Presence
 > (Orb / Task Board / notifications).
 
+> [!WARNING]
+> Device pairing authenticates this plugin's `/remfs` and protected `/pocket`
+> operations. It does **not** add login authentication to the native Harness
+> `/api`. Treat tailnet/LAN reachability as access to the Harness control plane;
+> keep walk-on-LAN off unless needed and restrict Tailscale ACLs to trusted
+> devices.
+
 **English** | [中文](README.zh.md) · [Architecture](docs/architecture.md) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
 ## Why
@@ -164,7 +171,7 @@ dsh plugin --profile web add @zetaluolang/remfs-persistent
 #   - insert:
 #       - id: remfs-persistent
 #         name: '@zetaluolang/remfs-persistent'
-#         inject: [connection, fs]
+#         inject: [connection, fs, sandboxPolicy, workspaceRegistry]
 # restart dsh web
 ```
 

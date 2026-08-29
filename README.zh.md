@@ -6,6 +6,9 @@
 
 本项目不替换 Harness 界面,而是把 Harness 本身变成可远程使用的工作环境:手机通过 Tailscale(或局域网)打开**真正的** DeepSeek Harness Web UI,插件桥接浏览器无法远程完成的两种事——在任意文件夹开始/恢复 Agent 会话,以及读写、上传、下载 PC 文件。
 
+> [!WARNING]
+> 设备配对只认证本插件的 `/remfs` 与受保护的 `/pocket` 操作,不会给原生 Harness `/api` 增加登录认证。请把 tailnet/局域网可达性视为 Harness 控制面权限;非必要不要开启 walk-on-LAN,并用 Tailscale ACL 只放行可信设备。
+
 [English](README.md) | **中文** · [架构](docs/architecture.md) · [安全](SECURITY.md) · [贡献](CONTRIBUTING.md)
 
 ## 为什么
@@ -49,7 +52,7 @@ flowchart LR
 - **手机工作台**——新建会话/文件浏览双标签、面包屑、预览/编辑/上传/下载、工作区徽标、悬浮球、侧栏自动收起、中英双语。
 - **host 层保护路径**,分两级:
   - **硬拦截——无论白名单如何、也无论你注册了什么工作区,都不可达**:系统目录(`Windows`/`System32`/`SysWOW64`)与凭据/密钥文件(`.credentials.yaml`/`.ssh`/`.aws`/`.gnupg`/`.env`/`id_rsa`/`*.pem` 等)。
-  - **软拦截——默认阻断,但你在本机把工作区**精确**注册到该目录时可达**:`AppData`、`Program Files`、`ProgramData` 与隐私数据目录(微信/WPS)。它们是隐私边界而非凭据边界;注册这类目录是只有本机用户才能做的决定,且不会因此解锁其下的硬拦截文件。
+  - **软拦截——默认阻断,但你在本机把工作区精确注册到该目录时可达**:`AppData`、`Program Files`、`ProgramData` 与隐私数据目录(微信/WPS)。它们是隐私边界而非凭据边界;注册这类目录是只有本机用户才能做的决定,且不会因此解锁其下的硬拦截文件。
 
 ## 安全模型
 
@@ -79,7 +82,7 @@ dsh plugin --profile web add @zetaluolang/remfs-persistent
 #   - insert:
 #       - id: remfs-persistent
 #         name: '@zetaluolang/remfs-persistent'
-#         inject: [connection, fs]
+#         inject: [connection, fs, sandboxPolicy, workspaceRegistry]
 # 重启 dsh web
 ```
 

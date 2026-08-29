@@ -2,7 +2,7 @@
 // Run: node --test test/security.test.js
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {
@@ -10,7 +10,7 @@ import {
   ensurePairingCode, rotatePairingCode, pairDevice, verifyDevice, listDevices,
   revokeDevice, revokeAllDevices, parsePairingCode, formatPairingCode,
   securityFile, buildCrumbs, deviceHasCapability, readRemfsOptions,
-  safeEqualHex, LASTSEEN_PERSIST_MS,
+  safeEqualHex, normalizeDeviceCapabilities, LASTSEEN_PERSIST_MS,
 } from '../lib/security.js'
 
 const DOCS = path.join(os.homedir(), 'Documents')
@@ -223,8 +223,12 @@ test('verifyDevice: lastSeen write is throttled (hot path stays read-only)', asy
     // Recent lastSeen (well inside the window): verify must NOT rewrite it.
     const recent = new Date(Date.now() - 5000).toISOString()
     await setLastSeen(recent)
+    const beforeStat = await stat(f, { bigint: true })
+    await new Promise((resolve) => setTimeout(resolve, 20))
     assert.equal((await verifyDevice(deviceId, credential, f)).ok, true)
     assert.equal(await getLastSeen(), recent, 'lastSeen must not be rewritten inside the throttle window')
+    const afterStat = await stat(f, { bigint: true })
+    assert.equal(afterStat.mtimeNs, beforeStat.mtimeNs, 'verification inside the throttle window must not write the store')
 
     // Stale lastSeen (past the window): verify MUST refresh it.
     const stale = new Date(Date.now() - LASTSEEN_PERSIST_MS - 30_000).toISOString()
@@ -238,6 +242,13 @@ test('verifyDevice: lastSeen write is throttled (hot path stays read-only)', asy
     await setLastSeen('not-a-date')
     assert.equal((await verifyDevice(deviceId, credential, f)).ok, true)
     assert.ok(Date.parse(await getLastSeen()) > 0)
+
+    // A clock rollback or hand-edited future value must not suppress updates
+    // indefinitely.
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    await setLastSeen(future)
+    assert.equal((await verifyDevice(deviceId, credential, f)).ok, true)
+    assert.ok(Date.parse(await getLastSeen()) < Date.parse(future))
   } finally { await rm(path.dirname(f), { recursive: true, force: true }) }
 })
 
@@ -456,22 +467,29 @@ test('permission/read error on the store fails closed', async (t) => {
   } finally { await rm(path.dirname(f), { recursive: true, force: true }) }
 })
 
-// Devices carry capabilities; legacy devices (no capabilities field) migrate
-// to the default files+approval set (cockpit was removed).
-test('device capability: newly paired device gets files+approval', async () => {
+// Devices carry capabilities; the obsolete `approval` grant migrates to the
+// explicit device-admin capability and missing lists receive safe defaults.
+test('device capability: newly paired device gets files+device-admin', async () => {
   const f = await tempFile()
   try {
     const code = await ensurePairingCode(f)
     const d = await pairDevice(code, 'phone', f)
     const v = await verifyDevice(d.deviceId, d.credential, f)
     assert.equal(v.ok, true)
-    assert.deepEqual(v.device.capabilities, ['files', 'approval'])
-    assert.equal(deviceHasCapability(v.device, 'approval'), true)
+    assert.deepEqual(v.device.capabilities, ['files', 'device-admin'])
+    assert.equal(deviceHasCapability(v.device, 'device-admin'), true)
     assert.equal(deviceHasCapability(v.device, 'files'), true)
     // the removed cockpit capability is never granted
     assert.equal(deviceHasCapability(v.device, 'cockpit'), false)
     // narrowing still gates correctly
-    assert.equal(deviceHasCapability({ capabilities: ['files'] }, 'approval'), false)
+    assert.equal(deviceHasCapability({ capabilities: ['files'] }, 'device-admin'), false)
+    assert.equal(deviceHasCapability({ capabilities: [] }, 'files'), false)
+    // STRICT: an authorization predicate never answers "yes" to malformed
+    // input. Legacy migration (missing field -> defaults) happens once in
+    // verifyDevice/listDevices, NOT here.
+    assert.equal(deviceHasCapability({}, 'files'), false)
+    assert.equal(deviceHasCapability({ capabilities: null }, 'device-admin'), false)
+    assert.equal(deviceHasCapability(null, 'files'), false)
   } finally { await rm(path.dirname(f), { recursive: true, force: true }) }
 })
 
@@ -487,9 +505,15 @@ test('device capability: legacy device (no capabilities field) gets all defaults
     await fsp.writeFile(f, JSON.stringify(raw), 'utf8')
     const v = await verifyDevice(d.deviceId, d.credential, f)
     assert.equal(v.ok, true)
-    assert.deepEqual(v.device.capabilities, ['files', 'approval'])
+    assert.deepEqual(v.device.capabilities, ['files', 'device-admin'])
     assert.equal(deviceHasCapability(v.device, 'files'), true)
   } finally { await rm(path.dirname(f), { recursive: true, force: true }) }
+})
+
+test('device capability: obsolete approval migrates to device-admin without widening explicit restrictions', () => {
+  assert.deepEqual(normalizeDeviceCapabilities(['files', 'approval']), ['files', 'device-admin'])
+  assert.deepEqual(normalizeDeviceCapabilities(['files']), ['files'])
+  assert.deepEqual(normalizeDeviceCapabilities([]), [])
 })
 
 test('remfs options: pocketStrict defaults OFF, fails closed on missing/corrupt files', async () => {
