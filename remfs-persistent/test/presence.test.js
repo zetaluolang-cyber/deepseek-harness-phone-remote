@@ -124,6 +124,30 @@ test('presence transition: DONE/FAILED do not regress to RUNNING on same task', 
   assert.equal(transition(STATE.FAILED, STATE.RUNNING), STATE.FAILED)
 })
 
+// The guard implements exactly ONE clamp (the DONE/FAILED -> RUNNING case
+// above). Everything else is pass-through by design: without task identity we
+// cannot tell an illegal jump from a legitimate new task. Pinned so a future
+// "stricter" matrix has to change this test deliberately.
+test('presence transition: no prior state passes through', () => {
+  assert.equal(transition(null, STATE.RUNNING), STATE.RUNNING)
+  assert.equal(transition(undefined, STATE.DONE), STATE.DONE)
+  assert.equal(transition('', STATE.NEEDS_USER), STATE.NEEDS_USER)
+})
+
+test('presence transition: every non-clamped edge is pass-through', () => {
+  // terminal states may still move to any NON-RUNNING state
+  assert.equal(transition(STATE.DONE, STATE.NEEDS_USER), STATE.NEEDS_USER)
+  assert.equal(transition(STATE.DONE, STATE.IDLE), STATE.IDLE)
+  assert.equal(transition(STATE.FAILED, STATE.DISCONNECTED), STATE.DISCONNECTED)
+  // ordinary forward edges
+  assert.equal(transition(STATE.RUNNING, STATE.STALE), STATE.STALE)
+  assert.equal(transition(STATE.RUNNING, STATE.NEEDS_USER), STATE.NEEDS_USER)
+  assert.equal(transition(STATE.NEEDS_USER, STATE.RUNNING), STATE.RUNNING)
+  // identity
+  assert.equal(transition(STATE.DONE, STATE.DONE), STATE.DONE)
+  assert.equal(transition(STATE.RUNNING, STATE.RUNNING), STATE.RUNNING)
+})
+
 // Dogfood finding: a still-open turn must never be FAILED just because a tool
 // call inside it errored — the agent is working and may self-recover
 // (design §4.2: FAILED = stopped and cannot self-recover).

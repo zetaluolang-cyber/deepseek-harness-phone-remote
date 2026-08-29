@@ -49,28 +49,25 @@ export function resolveState(f, staleReasons = []) {
 }
 
 /**
- * Lifecycle guard (design §21): given the previous state and the resolved
- * state, return the state the task SHOULD be in. Keeps transitions legal:
- *   STALE → RUNNING (recovered), RUNNING → STALE, → NEEDS_USER, → FAILED,
- *   → DONE, NEEDS_USER → RUNNING, etc. Illegal jumps (e.g. DONE → RUNNING
- *   without a new task) are clamped.
- * Phase A: we do not yet track task identity across completions, so the guard
- * accepts all forward transitions and only prevents DONE/FAILED regressing to
- * RUNNING on the SAME task (a fresh task would be a new taskId upstream).
- * @param {string} prev - previous STATE.
+ * Lifecycle guard (design §21). This implements exactly ONE rule:
+ *
+ *   a task that is already DONE or FAILED must not silently report RUNNING
+ *   again — terminal states only leave via a new task, which upstream would
+ *   surface as a new taskId.
+ *
+ * Every other transition is accepted as-is, including the STALE → RUNNING
+ * recovery path. We do not track task identity across completions yet, so a
+ * stricter legality matrix would clamp states we cannot actually distinguish
+ * from a legitimate new task. The narrow rule is deliberate, not a stub.
+ *
+ * @param {string} prev - previous STATE (falsy on first observation).
  * @param {string} next - resolved STATE.
  * @returns {string} the state to report.
  */
 export function transition(prev, next) {
   if (!prev) return next
-  if (prev === next) return next
-  // Once a task is DONE or FAILED, it must not silently go back to RUNNING on
-  // the same identity (design §21 lifecycle: terminal states only leave via a
-  // new task). Phase A keeps this conservative; recovery from STALE→RUNNING
-  // is allowed (that is the designed recovery path).
   if ((prev === STATE.DONE || prev === STATE.FAILED) && next === STATE.RUNNING) {
     return prev
   }
-  if (prev === STATE.STALE && next === STATE.RUNNING) return next // recovery
   return next
 }

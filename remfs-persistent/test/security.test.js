@@ -2,7 +2,7 @@
 // Run: node --test test/security.test.js
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {
@@ -10,6 +10,7 @@ import {
   ensurePairingCode, rotatePairingCode, pairDevice, verifyDevice, listDevices,
   revokeDevice, revokeAllDevices, parsePairingCode, formatPairingCode,
   securityFile, buildCrumbs, deviceHasCapability, readRemfsOptions,
+  safeEqualHex, LASTSEEN_PERSIST_MS,
 } from '../lib/security.js'
 
 const DOCS = path.join(os.homedir(), 'Documents')
@@ -183,6 +184,60 @@ test('device credential: valid auth, invalid auth, revoked auth', async () => {
     await revokeDevice(deviceId, f)
     assert.equal((await verifyDevice(deviceId, credential, f)).error, 'auth-invalid')
     assert.equal((await listDevices(f)).length, 0)
+  } finally { await rm(path.dirname(f), { recursive: true, force: true }) }
+})
+
+test('safeEqualHex: constant-time compare matches only on identical digests', () => {
+  const a = 'a'.repeat(64)
+  const b = 'b'.repeat(64)
+  assert.equal(safeEqualHex(a, a), true)
+  assert.equal(safeEqualHex(a, b), false)
+  // differing only in the last char must still be rejected
+  assert.equal(safeEqualHex(a, a.slice(0, 63) + 'b'), false)
+  // length mismatch must not throw (timingSafeEqual would)
+  assert.equal(safeEqualHex(a, a.slice(0, 32)), false)
+  assert.equal(safeEqualHex(a.slice(0, 32), a), false)
+  // empty / missing operands never match (a truncated store field must not
+  // become a wildcard credential)
+  assert.equal(safeEqualHex('', ''), false)
+  assert.equal(safeEqualHex(null, null), false)
+  assert.equal(safeEqualHex(undefined, ''), false)
+  assert.equal(safeEqualHex(a, null), false)
+})
+
+test('verifyDevice: lastSeen write is throttled (hot path stays read-only)', async () => {
+  const f = await tempFile()
+  try {
+    const code = await ensurePairingCode(f)
+    const { deviceId, credential } = await pairDevice(code, 'phone-a', f)
+    assert.equal((await verifyDevice(deviceId, credential, f)).ok, true)
+
+    const setLastSeen = async (iso) => {
+      const store = JSON.parse(await readFile(f, 'utf8'))
+      store.devices[0].lastSeen = iso
+      await writeFile(f, JSON.stringify(store, null, 2), 'utf8')
+    }
+    const getLastSeen = async () =>
+      JSON.parse(await readFile(f, 'utf8')).devices[0].lastSeen
+
+    // Recent lastSeen (well inside the window): verify must NOT rewrite it.
+    const recent = new Date(Date.now() - 5000).toISOString()
+    await setLastSeen(recent)
+    assert.equal((await verifyDevice(deviceId, credential, f)).ok, true)
+    assert.equal(await getLastSeen(), recent, 'lastSeen must not be rewritten inside the throttle window')
+
+    // Stale lastSeen (past the window): verify MUST refresh it.
+    const stale = new Date(Date.now() - LASTSEEN_PERSIST_MS - 30_000).toISOString()
+    await setLastSeen(stale)
+    assert.equal((await verifyDevice(deviceId, credential, f)).ok, true)
+    const after = await getLastSeen()
+    assert.notEqual(after, stale, 'lastSeen must be refreshed once the throttle window elapsed')
+    assert.ok(Date.parse(after) > Date.parse(stale))
+
+    // An unparseable value self-heals rather than pinning the device forever.
+    await setLastSeen('not-a-date')
+    assert.equal((await verifyDevice(deviceId, credential, f)).ok, true)
+    assert.ok(Date.parse(await getLastSeen()) > 0)
   } finally { await rm(path.dirname(f), { recursive: true, force: true }) }
 })
 

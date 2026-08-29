@@ -97,9 +97,17 @@ authentication. Pairing and the filesystem capability layer are.
 - **Mobile-first workbench** — New Session / Files tabs, breadcrumbs, preview /
   edit / upload / download, workspace badges, floating ball, auto-collapsed
   sidebar, bilingual UI (EN/zh).
-- **Host-enforced protected paths** — system dirs, AppData, credential/key files
-  (`.credentials.yaml`, `.ssh`, `.aws`, `.gnupg`, `.env`, `id_rsa`, `*.pem` …)
-  and private data dirs (WeChat/WPS) are blocked regardless of the allowlist.
+- **Host-enforced protected paths**, in two tiers:
+  - **Hard-denied — never reachable, regardless of the allowlist or of any
+    workspace you register**: system dirs (`Windows`, `System32`, `SysWOW64`)
+    and credential/key files (`.credentials.yaml`, `.ssh`, `.aws`, `.gnupg`,
+    `.env`, `id_rsa`, `*.pem` …).
+  - **Soft-denied — blocked by default, but reachable if you deliberately
+    register a workspace exactly there on the PC**: `AppData`, `Program Files`,
+    `ProgramData` and private data dirs (WeChat/WPS). These are privacy
+    boundaries, not credential boundaries; registering such a folder is a local
+    decision only the PC user can make, and it never unlocks the hard-denied
+    files underneath.
 
 ## Security model
 

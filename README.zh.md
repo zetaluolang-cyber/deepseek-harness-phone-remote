@@ -47,7 +47,9 @@ flowchart LR
 - **手机推送通知(关页面也能收到)**——可选的 Web Push 通道:手机注册同源 Service Worker(`/remfs-sw.js`),配对后订阅(使用 host 的 VAPID 公钥)。宿主在 NEEDS_USER/FAILED(及可选 DONE)状态变化时推送,标签页关闭也能收到。RFC 8291 加密为手写实现(零依赖),已与官方 RFC 测试向量逐字节对拍。需要 HTTPS(Tailscale HTTPS 或 localhost)。详见 [docs/presence-push.md](docs/presence-push.md)。
 - **设备配对与管理**——一次性配对码(10 分钟有效、仅一次);列出/吊销/吊销全部设备;凭据只存哈希。
 - **手机工作台**——新建会话/文件浏览双标签、面包屑、预览/编辑/上传/下载、工作区徽标、悬浮球、侧栏自动收起、中英双语。
-- **host 层保护路径**——系统目录、AppData、凭据/密钥文件(`.credentials.yaml`/`.ssh`/`.aws`/`.gnupg`/`.env`/`id_rsa`/`*.pem` 等)与隐私数据目录(微信/WPS)无论白名单如何都拦截。
+- **host 层保护路径**,分两级:
+  - **硬拦截——无论白名单如何、也无论你注册了什么工作区,都不可达**:系统目录(`Windows`/`System32`/`SysWOW64`)与凭据/密钥文件(`.credentials.yaml`/`.ssh`/`.aws`/`.gnupg`/`.env`/`id_rsa`/`*.pem` 等)。
+  - **软拦截——默认阻断,但你在本机把工作区**精确**注册到该目录时可达**:`AppData`、`Program Files`、`ProgramData` 与隐私数据目录(微信/WPS)。它们是隐私边界而非凭据边界;注册这类目录是只有本机用户才能做的决定,且不会因此解锁其下的硬拦截文件。
 
 ## 安全模型
 

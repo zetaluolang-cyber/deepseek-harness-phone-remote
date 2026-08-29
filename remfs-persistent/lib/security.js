@@ -14,7 +14,7 @@
 // the store file is replaced atomically (tmp + rename), so concurrent
 // verifyDevice/revokeDevice/pairDevice calls cannot resurrect a revoked
 // credential or double-consume a pairing code.
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { mkdir, readFile, writeFile, rename, copyFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -28,6 +28,12 @@ export const DEFAULT_DEVICE_CAPABILITIES = Object.freeze(['files', 'approval'])
 
 export const PAIRING_TTL_MS = 10 * 60 * 1000 // pairing code validity
 export const CREDENTIAL_BYTES = 32 // long-term device credential (256-bit)
+// `lastSeen` is a UI convenience field, not a security control. Persisting it
+// on EVERY verifyDevice() meant a full store rewrite (stringify + tmp write +
+// rename) per RPC — and presence polls every 8s, the push dispatcher every
+// 10s, plus each phone. Only write when the stored value is at least this
+// stale, so the common path is read-only.
+export const LASTSEEN_PERSIST_MS = 60 * 1000
 export const CODE_GROUPS = 8 // display groups for the pairing code
 export const CODE_GROUP_CHARS = 4 // hex chars per group (128-bit typable code)
 
@@ -184,6 +190,23 @@ export function buildCrumbs(p) {
 
 function sha256(s) {
   return createHash('sha256').update(s).digest('hex')
+}
+
+/**
+ * Constant-time comparison of two hex digests. Both operands here are always
+ * SHA-256 hex (64 chars), so the length check below is constant in practice
+ * and only guards against a hand-edited / truncated store field — it never
+ * leaks anything about a real credential.
+ *
+ * The 256-bit credentials make a remote timing attack impractical either way,
+ * but a channel that authenticates devices should not compare secrets with
+ * `!==`: `timingSafeEqual` is the correct primitive and costs nothing.
+ */
+export function safeEqualHex(a, b) {
+  const ab = Buffer.from(String(a == null ? '' : a), 'utf8')
+  const bb = Buffer.from(String(b == null ? '' : b), 'utf8')
+  if (ab.length === 0 || ab.length !== bb.length) return false
+  return timingSafeEqual(ab, bb)
 }
 
 export function randomToken(bytes) {
@@ -381,7 +404,7 @@ export async function pairDevice(code, deviceName, file = securityFile()) {
     if (!p || !p.codeHash) return { error: ERR.PAIRING_USED }
     if (p.expiresAt < Date.now()) return { error: ERR.PAIRING_EXPIRED }
     const given = sha256(parsePairingCode(code))
-    if (given !== p.codeHash) return { error: ERR.PAIRING_INVALID }
+    if (!safeEqualHex(given, p.codeHash)) return { error: ERR.PAIRING_INVALID }
     // single use
     store.pairing = null
     const deviceId = randomUUID()
@@ -413,9 +436,16 @@ export async function verifyDevice(deviceId, credential, file = securityFile()) 
     const store = await loadStore(file)
     const dev = store.devices.find((d) => d.id === deviceId)
     if (!dev) return { error: ERR.AUTH_INVALID }
-    if (sha256(credential) !== dev.credentialHash) return { error: ERR.AUTH_INVALID }
-    dev.lastSeen = new Date().toISOString()
-    await saveStore(file, store)
+    if (!safeEqualHex(sha256(credential), dev.credentialHash)) return { error: ERR.AUTH_INVALID }
+    // Throttled write: `lastSeen` is display-only, so the hot path (every
+    // presence poll, every file op) stays read-only. An unparseable/absent
+    // value yields 0 and self-heals on the next call.
+    const now = Date.now()
+    const seenAt = Date.parse(dev.lastSeen || '') || 0
+    if (now - seenAt >= LASTSEEN_PERSIST_MS) {
+      dev.lastSeen = new Date(now).toISOString()
+      await saveStore(file, store)
+    }
     // legacy devices (no capabilities field) surface the default set
     const caps = Array.isArray(dev.capabilities) && dev.capabilities.length > 0
       ? dev.capabilities
