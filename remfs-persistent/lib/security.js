@@ -22,9 +22,10 @@ import os from 'node:os'
 
 // ---------------------------------------------------------------- constants
 
-// Default capabilities for a newly paired device (the Pocket Cockpit concept
-// was removed; 'files' + 'approval' remain the baseline).
-export const DEFAULT_DEVICE_CAPABILITIES = Object.freeze(['files', 'approval'])
+// Default capabilities for a newly paired device. `approval` was written by
+// older releases after the Pocket Cockpit was removed, but no endpoint ever
+// enforced it. It is migrated in memory to the explicit `device-admin` grant.
+export const DEFAULT_DEVICE_CAPABILITIES = Object.freeze(['files', 'device-admin'])
 
 export const PAIRING_TTL_MS = 10 * 60 * 1000 // pairing code validity
 export const CREDENTIAL_BYTES = 32 // long-term device credential (256-bit)
@@ -70,6 +71,7 @@ export const ERR = {
   PAIRING_USED: 'pairing-used',
   DEVICE_NOT_FOUND: 'device-not-found',
   DEVICE_REVOKED: 'device-revoked',
+  CAPABILITY_REQUIRED: 'capability-required',
   ROOT_OUTSIDE: 'root-outside-approved',
   PATH_TRAVERSAL: 'path-traversal',
   PATH_PROTECTED: 'path-protected',
@@ -207,6 +209,19 @@ export function safeEqualHex(a, b) {
   const bb = Buffer.from(String(b == null ? '' : b), 'utf8')
   if (ab.length === 0 || ab.length !== bb.length) return false
   return timingSafeEqual(ab, bb)
+}
+
+/** Normalize persisted capabilities without silently widening an explicit
+ * empty/restricted list. Missing lists are legacy and receive the defaults;
+ * the obsolete `approval` name migrates to `device-admin`. */
+export function normalizeDeviceCapabilities(value) {
+  const source = Array.isArray(value) ? value : DEFAULT_DEVICE_CAPABILITIES
+  const out = []
+  for (const raw of source) {
+    const cap = String(raw || '') === 'approval' ? 'device-admin' : String(raw || '')
+    if (cap && !out.includes(cap)) out.push(cap)
+  }
+  return out
 }
 
 export function randomToken(bytes) {
@@ -415,9 +430,8 @@ export async function pairDevice(code, deviceName, file = securityFile()) {
       createdAt: new Date().toISOString(),
       lastSeen: new Date().toISOString(),
       credentialHash: sha256(credential),
-      // Capability model: every newly paired device gets the default set
-      // (files + approval). Existing devices without the field migrate to
-      // the same default.
+      // Capability model: new devices can use files/workspaces and manage
+      // paired devices. PC-local store edits may narrow this list.
       capabilities: DEFAULT_DEVICE_CAPABILITIES.slice(),
     })
     await saveStore(file, store)
@@ -441,20 +455,24 @@ export async function verifyDevice(deviceId, credential, file = securityFile()) 
     // presence poll, every file op) stays read-only. An unparseable/absent
     // value yields 0 and self-heals on the next call.
     const now = Date.now()
-    const seenAt = Date.parse(dev.lastSeen || '') || 0
-    if (now - seenAt >= LASTSEEN_PERSIST_MS) {
+    const seenAt = Date.parse(dev.lastSeen || '')
+    if (!Number.isFinite(seenAt) || seenAt > now || now - seenAt >= LASTSEEN_PERSIST_MS) {
       dev.lastSeen = new Date(now).toISOString()
       await saveStore(file, store)
     }
-    // legacy devices (no capabilities field) surface the default set
-    const caps = Array.isArray(dev.capabilities) && dev.capabilities.length > 0
-      ? dev.capabilities
-      : DEFAULT_DEVICE_CAPABILITIES
-    return { ok: true, device: { ...dev, capabilities: caps.slice() } }
+    const caps = normalizeDeviceCapabilities(dev.capabilities)
+    return { ok: true, device: { ...dev, capabilities: caps } }
   })
 }
 
-/** True when a verified device has `cap` (defaults for legacy devices). */
+/**
+ * True when a VERIFIED device has `cap`. Strict: a device without an explicit
+ * capabilities array has NO capabilities here — an authorization predicate
+ * must never answer "yes" to malformed input. Legacy migration (missing field
+ * -> defaults, `approval` -> `device-admin`) happens exactly once, in
+ * verifyDevice()/listDevices(), so every device object that reaches a gate is
+ * already normalized.
+ */
 export function deviceHasCapability(device, cap) {
   const caps = device && device.capabilities
   return Array.isArray(caps) && caps.includes(cap)
@@ -465,6 +483,7 @@ export async function listDevices(file = securityFile()) {
     const store = await loadStore(file)
     return store.devices.map((d) => ({
       id: d.id, name: d.name, createdAt: d.createdAt, lastSeen: d.lastSeen,
+      capabilities: normalizeDeviceCapabilities(d.capabilities),
     }))
   })
 }

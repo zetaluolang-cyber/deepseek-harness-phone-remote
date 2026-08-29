@@ -39,13 +39,14 @@ dsh plugin --profile web add @zetaluolang/remfs-persistent
 #    - insert:
 #        - id: remfs-persistent
 #          name: '@zetaluolang/remfs-persistent'
-#          inject: [connection, fs]
+#          inject: [connection, fs, sandboxPolicy, workspaceRegistry]
 
 # 3. restart dsh web, then refresh the GUI
 ```
 
-The `inject: [connection, fs]` row is **not optional** — without it the `/remfs`
-channel silently never registers.
+The four-service `inject: [connection, fs, sandboxPolicy, workspaceRegistry]`
+row is **not optional** — without it the plugin cannot resolve a safe workspace
+root and `/remfs` does not register.
 
 ## First use on the phone (pairing)
 
@@ -59,7 +60,8 @@ channel silently never registers.
 ## Security model
 
 - **Tailscale / trusted-host ≠ authentication** — transport only.
-- **Device pairing** is the application boundary.
+- **Device pairing** is the application boundary for `/remfs`; it does not add
+  login authentication to the native Harness `/api`.
 - **The allowlist** is the file-permission boundary; it can only be narrowed
   remotely (widening requires editing `.remfs-roots.json` on the PC).
 - Threat model: https://github.com/zetaluolang-cyber/deepseek-harness-phone-remote/blob/master/SECURITY.md

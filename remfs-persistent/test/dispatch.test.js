@@ -93,6 +93,46 @@ test('revoke protocol: A revokes B; A stays authorized, B is invalidated', async
   } finally { await teardown(t, dir) }
 })
 
+test('capability gate: files and device-admin are enforced independently', async (t) => {
+  const { dir, root, secFile, handler, pair } = await setup()
+  try {
+    const fileOnly = await pair('file-only')
+    const adminOnly = await pair('admin-only')
+    const store = JSON.parse(await fsp.readFile(secFile, 'utf8'))
+    store.devices.find((d) => d.id === fileOnly.deviceId).capabilities = ['files']
+    store.devices.find((d) => d.id === adminOnly.deviceId).capabilities = ['device-admin']
+    await fsp.writeFile(secFile, JSON.stringify(store, null, 2), 'utf8')
+
+    const fileList = await listCall(handler, { ...fileOnly, path: root })
+    assert.equal(fileList.ok, true)
+    const fileAdmin = await handler('devices', fileOnly)
+    assert.equal(fileAdmin.ok, false)
+    assert.equal(fileAdmin.error.code, 'capability-required')
+    assert.equal(fileAdmin.error.details.capability, 'device-admin')
+
+    const adminList = await listCall(handler, { ...adminOnly, path: root })
+    assert.equal(adminList.ok, false)
+    assert.equal(adminList.error.code, 'capability-required')
+    assert.equal(adminList.error.details.capability, 'files')
+    const adminDevices = await handler('devices', adminOnly)
+    assert.equal(adminDevices.ok, true)
+    assert.ok(adminDevices.value.devices.length >= 2)
+  } finally { await teardown(t, dir) }
+})
+
+// The gate is a fail-closed map, not a "gate these, exempt the rest" pair of
+// Sets: an endpoint nobody registered must be REJECTED, never silently
+// capability-exempt. This is the regression test for that shape.
+test('capability gate: unregistered endpoints are rejected, never capability-exempt', async (t) => {
+  const { dir, handler, pair } = await setup()
+  try {
+    const dev = await pair('phone') // full default capabilities
+    const res = await handler('someFutureEndpoint', dev)
+    assert.equal(res.ok, false)
+    assert.equal(res.error.code, 'bad-request')
+  } finally { await teardown(t, dir) }
+})
+
 // ------------------------------------------------------- bug 3: concurrency
 
 test('concurrency: verifyDevice racing revokeDevice never resurrects the credential', async (t) => {

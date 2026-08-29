@@ -239,7 +239,7 @@ window.__ModuleLoader__.load({
         revokedToast: '✅ 已吊销', noDevices: '暂无设备', devMgmt: '🔐 设备管理',
         pushToggle: '推送通知(关页面也能收到「需要你」)', pushUnsupported: '需 HTTPS(localhost 或 Tailscale HTTPS)', pushEnableErr: '推送不可用,请确认已连接 Tailscale HTTPS',
         rootOutside: '新增目录必须在已批准目录内——在电脑上编辑 .remfs-roots.json 添加新位置',
-        authFailed: '设备未授权,请重新配对',
+        authFailed: '设备未授权,请重新配对', capDenied: '此设备没有执行该操作所需的权限',
         encNotUtf8: '检测到非 UTF-8 编码,请转为 UTF-8 后重试'
       },
       en: {
@@ -280,7 +280,7 @@ window.__ModuleLoader__.load({
         revokedToast: '✅ Revoked', noDevices: 'No devices', devMgmt: '🔐 Devices',
         pushToggle: 'Push notifications (get "needs you" with the page closed)', pushUnsupported: 'needs HTTPS (localhost or Tailscale HTTPS)', pushEnableErr: 'Push unavailable — check you are on Tailscale HTTPS',
         rootOutside: 'New roots must stay inside approved roots — edit .remfs-roots.json on the PC to add new locations',
-        authFailed: 'Device not authorized — please pair again',
+        authFailed: 'Device not authorized — please pair again', capDenied: 'This device does not have permission for that operation',
         encNotUtf8: 'Non-UTF-8 encoding detected — convert to UTF-8 and retry'
       }
     }
@@ -423,6 +423,7 @@ window.__ModuleLoader__.load({
       if (code === 'encoding-not-utf8') return { lock: false, text: t('encNotUtf8') }
       if (code === 'root-outside-approved') return { lock: false, text: t('rootOutside') }
       if (code === 'auth-required' || code === 'auth-invalid') return { lock: true, text: t('authFailed') }
+      if (code === 'capability-required') return { lock: true, text: t('capDenied') }
       if (/denied|EACCES|EPERM/i.test(s)) return { lock: true, text: t('lockDenied') }
       if (/allowed|范围|outside/i.test(s)) return { lock: true, text: t('outside') }
       return { lock: false, text: s }

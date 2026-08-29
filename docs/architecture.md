@@ -31,7 +31,8 @@ DeepSeek Harness Web (binds 127.0.0.1)
 
 - Registers the `/remfs` channel on `ctx.connection.rpc.handle(...)` with
   `{ authority: 'trusted-host' }` — the same browser-trust fence as `/api`.
-- Declares `inject: ['connection', 'fs']` on the loader row — REQUIRED.
+- Declares `inject: ['connection', 'fs', 'sandboxPolicy',
+  'workspaceRegistry']` on the loader row — REQUIRED.
   Cross-entry services must be injected; a bare `ctx.get()` in `apply` resolves
   too early and the channel silently never registers.
 - Endpoints (all but `pair` require a device credential):
@@ -60,7 +61,10 @@ Pure Node (no Cordis) so it is unit-tested by `node --test`:
 - **Pairing**: 128-bit one-time code, 10-minute TTL, single use, SHA-256 at rest;
   plaintext shown PC-side in `~/.dsh/remfs-pairing.txt` + the harness log.
 - **Devices**: 256-bit credentials, stored only as SHA-256 hashes in
-  `~/.dsh/remfs-security.json`; list/revoke/revoke-all.
+  `~/.dsh/remfs-security.json`; list/revoke/revoke-all. Endpoint authorization
+  enforces `files` for workspace/filesystem operations and `device-admin` for
+  device management. Existing `approval` capabilities migrate in memory to
+  `device-admin`.
 - **Paths**: `hasTraversal` (rejects `..` and UNC), `isWithin` (case-insensitive),
   `segmentsDenied`/`deniedPath` (protected paths + workspace escape hatch),
   `canSetRoots` (allowlist can only be narrowed remotely).
@@ -70,17 +74,22 @@ Pure Node (no Cordis) so it is unit-tested by `node --test`:
 - **Allowlist is the primary boundary.** Default: the workspace root. The phone
   can only *remove* or *narrow* roots over the wire; adding new locations means
   editing `.remfs-roots.json` on the PC (local config = PC confirmation).
-- **Protected paths** are a second, non-negotiable layer: system dirs, AppData,
-  credential/key files (`.credentials.yaml`, `.ssh`, `.aws`, `.gnupg`,
-  `.config/gcloud`, `.env`, `id_rsa`, `*.pem/.key/.pfx`, ...) and private data
-  dirs (WeChat/WPS) are denied regardless of the allowlist.
+- **Protected paths** have two tiers. System directories and credential/key
+  paths (`Windows`, `.credentials.yaml`, `.ssh`, `.aws`, `.gnupg`,
+  `.config/gcloud`, `.env`, `id_rsa`, `*.pem/.key/.pfx`, ...) are hard-denied.
+  Privacy-sensitive locations such as AppData and WeChat/WPS are soft-denied by
+  default, but a PC-local workspace registration can deliberately expose that
+  workspace without unlocking hard-denied children.
 - **Symlink/junction escape**: `fs.processPath()` returns the realpath, so a
   link inside an allowed root that points outside fails the allowlist check.
 
 ## Trust model (three independent layers)
 
 1. **Transport** — Tailscale membership / LAN reachability. Not authentication.
-2. **Application** — device pairing + credentials. The actual auth boundary.
+2. **Application** — device pairing + credentials. The auth boundary for this
+   plugin's `/remfs` and protected `/pocket` operations.
 3. **Capability** — allowlist + protected paths. The file-permission boundary.
 
 `trusted-host` is a transport fence only; it never substitutes for 2 or 3.
+The native Harness `/api` is outside this plugin boundary and has no user login;
+transport reachability must therefore remain restricted to trusted devices.

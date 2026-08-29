@@ -24,7 +24,8 @@
 import {
   hasTraversal, isWithin, deniedPath, canSetRoots,
   pairDevice, verifyDevice, listDevices, revokeDevice,
-  revokeAllDevices, securityFile as defaultSecurityFile, ERR,
+  revokeAllDevices, deviceHasCapability,
+  securityFile as defaultSecurityFile, ERR,
 } from './security.js'
 import {
   hasUtf16Bom, hasUtf8Bom, isValidUtf8, dominantNewline,
@@ -36,6 +37,25 @@ const MAX_BINARY = 5 * 1024 * 1024
 // newline style. BOMs live in the first bytes and a 64 KB prefix is a fair
 // sample of the dominant newline style without reading huge logs.
 const ENCODE_PROBE_BYTES = 64 * 1024
+
+// Endpoint -> required capability, FAIL-CLOSED: an endpoint that is not in
+// this map is rejected before it can reach the switch. Two Sets ("gate these,
+// let the rest through") would make every future endpoint capability-exempt
+// by default the moment someone forgets to register it — the exact silent
+// fail-open this store's allowlist/root handling is designed to avoid.
+// ('pair' is the unauthenticated bootstrap and is handled before auth.)
+const ENDPOINT_CAPABILITY = Object.freeze({
+  allowed: 'files',
+  setAllowed: 'files',
+  workspaces: 'files',
+  ensureWorkspace: 'files',
+  list: 'files',
+  read: 'files',
+  write: 'files',
+  devices: 'device-admin',
+  revoke: 'device-admin',
+  revokeAll: 'device-admin',
+})
 
 const err = (code, message, details) => ({ ok: false, error: { code, message, details: details || {} } })
 
@@ -100,11 +120,11 @@ export function createDispatcher(adapter, opts = {}) {
   const auth = async (payload) => {
     const res = await verifyDevice(payload && payload.deviceId, payload && payload.credential, secFile)
     if (res.error === ERR.STORE_CORRUPT) {
-      return err(ERR.STORE_CORRUPT, 'security store corrupt — see ~/.dsh/remfs-security.json.corrupt-*; re-pair devices after fixing it')
+      return { error: err(ERR.STORE_CORRUPT, 'security store corrupt — see ~/.dsh/remfs-security.json.corrupt-*; re-pair devices after fixing it') }
     }
-    if (res.error === ERR.AUTH_REQUIRED) return err(ERR.AUTH_REQUIRED, 'device authentication required')
-    if (res.error) return err(ERR.AUTH_INVALID, 'device authentication failed — re-pair the device')
-    return null
+    if (res.error === ERR.AUTH_REQUIRED) return { error: err(ERR.AUTH_REQUIRED, 'device authentication required') }
+    if (res.error) return { error: err(ERR.AUTH_INVALID, 'device authentication failed — re-pair the device') }
+    return { device: res.device }
   }
 
   const workspaceRoots = async () => {
@@ -136,8 +156,16 @@ export function createDispatcher(adapter, opts = {}) {
       }
 
       // ---- everything else requires a valid device credential ----
-      const authErr = await auth(payload)
-      if (authErr) return authErr
+      const authRes = await auth(payload)
+      if (authRes.error) return authRes.error
+      const device = authRes.device
+      const required = ENDPOINT_CAPABILITY[endpoint]
+      if (required === undefined) {
+        return err('bad-request', 'unknown endpoint: ' + String(endpoint), { issues: [] })
+      }
+      if (!deviceHasCapability(device, required)) {
+        return err(ERR.CAPABILITY_REQUIRED, 'device lacks the ' + required + ' capability', { capability: required })
+      }
 
       switch (endpoint) {
         case 'devices': {
