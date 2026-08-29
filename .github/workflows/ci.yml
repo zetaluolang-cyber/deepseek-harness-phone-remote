@@ -17,21 +17,19 @@ jobs:
           node-version: 22
       - name: Syntax check every lib file (lint)
         run: |
-          for f in host.js client.js security.js encoding.js dispatch.js presence/contract.js presence/api.js presence/heartbeat.js presence/state.js presence/summary.js presence/service.js; do
-            node --check "remfs-persistent/lib/$f"
-          done
+          find remfs-persistent/lib -type f -name '*.js' -print0 | xargs -0 -n1 node --check
           node --check remfs-persistent/scripts/dogfood-board.js
           node --check remfs-persistent/scripts/dump-session.js
           node --check remfs-persistent/scripts/demo-presence.js
-      - name: All node tests (explicit files, zero-test guard)
+      - name: All node tests (automatic discovery, zero-test guard)
         run: |
           cd remfs-persistent
-          OUT=$(node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/presence.test.js test/presence-ui.test.js test/presence-api.test.js test/dogfood.test.js test/dump-session.test.js test/demo-presence.test.js test/encoding.test.js 2>&1)
+          OUT=$(node --test 2>&1)
           echo "$OUT"
           COUNT=$(echo "$OUT" | grep -oP '[#ℹ] tests \K\d+' | head -1)
           echo "tests executed: ${COUNT:-0}"
-          if [ -z "$COUNT" ] || [ "$COUNT" -lt 20 ]; then
-            echo "::error::zero/suspicious test count (expected >= 20, got ${COUNT:-0}) - CI must never pass with no tests"
+          if [ -z "$COUNT" ] || [ "$COUNT" -lt 140 ]; then
+            echo "::error::zero/suspicious test count (expected >= 140, got ${COUNT:-0}) - CI must never silently omit test files"
             exit 1
           fi
       - name: No maintainer-specific paths in deploy scripts
@@ -67,15 +65,21 @@ jobs:
       - name: Launcher ownership regression (dummy :3080 + owned-kill)
         shell: pwsh
         run: ./test/launcher-ownership.ps1
-      - name: All node tests on Windows (explicit files, zero-test guard)
+      - name: Syntax check every lib file on Windows
+        run: |
+          Get-ChildItem remfs-persistent/lib -Recurse -Filter *.js | ForEach-Object {
+            node --check $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: All node tests on Windows (automatic discovery, zero-test guard)
         run: |
           cd remfs-persistent
-          $OUT = node --test test/security.test.js test/dispatch.test.js test/client-contract.test.js test/presence.test.js test/presence-ui.test.js test/presence-api.test.js test/dogfood.test.js test/dump-session.test.js test/demo-presence.test.js test/encoding.test.js 2>&1 | Out-String
+          $OUT = node --test 2>&1 | Out-String
           Write-Host $OUT
           $m = [regex]::Match($OUT, '[#ℹ] tests (\d+)')
           $count = if ($m.Success) { [int]$m.Groups[1].Value } else { 0 }
           Write-Host "tests executed: $count"
-          if ($count -lt 20) { Write-Error "zero/suspicious test count (expected >= 20, got $count)"; exit 1 }
+          if ($count -lt 140) { Write-Error "zero/suspicious test count (expected >= 140, got $count)"; exit 1 }
 
   package-smoke:
     runs-on: ubuntu-latest
@@ -142,5 +146,4 @@ jobs:
         run: ./test/installer-patch.integration.ps1
         env:
           DSH_BIN: /usr/local/bin/dsh
-
 

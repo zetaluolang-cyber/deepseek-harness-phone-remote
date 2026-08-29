@@ -2,6 +2,13 @@
 
 All notable changes to `@zetaluolang/remfs-persistent` and the deploy package.
 
+## Unreleased
+
+- **Complete CI discovery** — both Linux and Windows run every automatically
+  discovered Node test and syntax-check every JavaScript module under `lib/`,
+  including Web Push encryption/store tests that the old hand-written list
+  omitted.
+
 ## [1.3.1] — 2026-08 (orb polish + instant presence)
 
 - **Brand DSH ball** — the PC orb now mirrors the in-page Orb: blue gradient

@@ -21,11 +21,11 @@ docs first.
 
 ```bash
 cd remfs-persistent
-node --test test/security.test.js
+npm test
 ```
 
-CI runs the same suite plus `node --check` on all lib files and a PowerShell
-parse check on the deploy scripts.
+CI discovers the complete `test/**/*.test.js` suite via `node --test`, checks
+every JavaScript file under `lib/`, and parses the PowerShell deploy scripts.
 
 ## Plugin structure
 
@@ -47,7 +47,7 @@ parse check on the deploy scripts.
 2. Return data in `value`, errors as `err(code, message, details)`.
 3. Call it from `client.js` via the `rpc(method, payload)` helper.
 4. Add a unit test in `test/security.test.js` if it touches security logic.
-5. `node --test` + a manual check on the live harness.
+5. `npm test` + a manual check on the live harness.
 
 ## Security rules (mandatory)
 
