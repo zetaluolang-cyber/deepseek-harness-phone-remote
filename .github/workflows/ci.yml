@@ -42,15 +42,30 @@ jobs:
             if ($hits) { $bad += "$f : " + (($hits | ForEach-Object { $_.LineNumber }) -join ',') }
           }
           if ($bad.Count -gt 0) { Write-Error "Maintainer-specific C:\Users\<name> paths found: $($bad -join '; ')"; exit 1 }
-      - name: PowerShell syntax check (deploy scripts)
+      - name: PowerShell syntax check (every .ps1, auto-discovered)
         shell: pwsh
         run: |
-          $files = @('install.ps1', 'keep_awake.ps1', 'restart_harness.ps1', 'restart_harness_once.ps1', 'stop_harness.ps1', 'start_harness.template.ps1', 'harness-common.ps1', 'refresh_pairing.ps1', 'watchdog.ps1', 'test/install-smoke.ps1', 'test/launcher-ownership.ps1', 'test/installer-patch.integration.ps1')
+          # Auto-discovery, not a hand-written list: the previous list had
+          # already gone stale and omitted scripts/orb-widget.ps1 - the one
+          # file in this repo with a history of parse-time bugs (see
+          # 76ecca9, "New-Object Type(expr) mis-parses binary operators").
+          $files = Get-ChildItem -Path . -Recurse -Filter *.ps1 |
+            Where-Object { $_.FullName -notmatch '\\node_modules\\' }
+          if ($files.Count -lt 12) {
+            Write-Error "suspicious .ps1 count ($($files.Count)) - discovery regression"; exit 1
+          }
+          Write-Host "parsing $($files.Count) PowerShell files"
+          $bad = 0
           foreach ($f in $files) {
             $errs = $null
-            [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$errs) | Out-Null
-            if ($errs.Count -gt 0) { Write-Error "$f parse errors: $($errs.Count)"; exit 1 }
+            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errs) | Out-Null
+            if ($errs.Count -gt 0) {
+              Write-Host "::error::$($f.FullName) parse errors: $($errs.Count)"
+              foreach ($e in $errs) { Write-Host "  $($e.Extent.StartLineNumber): $($e.Message)" }
+              $bad++
+            }
           }
+          if ($bad -gt 0) { Write-Error "$bad file(s) failed to parse"; exit 1 }
 
   windows-deploy-tests:
     runs-on: windows-latest
