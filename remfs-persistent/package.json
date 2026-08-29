@@ -4,6 +4,9 @@
   "description": "Secure remote workspace & filesystem bridge for DeepSeek Harness: device-authenticated RPC, capability-bounded file access, session start/resume from your phone. One-click Tailscale deploy in the GitHub repo.",
   "license": "MIT",
   "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
