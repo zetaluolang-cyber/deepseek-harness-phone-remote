@@ -54,13 +54,15 @@ try {
   if (Test-Path $posFile) {
     $p = Get-Content $posFile -Raw | ConvertFrom-Json
     if ($p -and $p.x -is [int] -and $p.y -is [int]) {
-      $form.Location = New-Object System.Drawing.Point([int]$p.x, [int]$p.y)
+      $form.Location = [System.Drawing.Point]::new([int]$p.x, [int]$p.y)
     }
   }
 } catch { }
 if ($form.Location.X -eq 0 -and $form.Location.Y -eq 0) {
   $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-  $form.Location = New-Object System.Drawing.Point($wa.Right - $SIZE - 16, $wa.Bottom - $SIZE - 16)
+  # NOTE: use [Type]::new(...) here — `New-Object Type($a - $b, ...)` mis-parses
+  # any binary operator in command mode (op_Subtraction on Object[]).
+  $form.Location = [System.Drawing.Point]::new($wa.Right - $SIZE - 16, $wa.Bottom - $SIZE - 16)
 }
 
 $current = @{ state = $P_DISC; title = ''; text = $P_DISC; glow = 0.0; alert = $false }
@@ -73,7 +75,7 @@ $form.Add_Paint({
   $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
   $c = $P_COLOR[$current.state]
   if (-not $c) { $c = $P_COLOR[$P_DISC] }
-  $rect = New-Object System.Drawing.Rectangle(2, 2, $SIZE - 4, $SIZE - 4)
+  $rect = [System.Drawing.Rectangle]::new(2, 2, $SIZE - 4, $SIZE - 4)
 
   # alert glow: pulsing outer halo for NEEDS_USER / FAILED
   if ($current.alert) {
@@ -133,11 +135,12 @@ $form.Add_MouseMove({
     if ([Math]::Abs($dx) -gt 4 -or [Math]::Abs($dy) -gt 4) { $drag.moved = $true }
     $nx = $drag.ox + $dx; $ny = $drag.oy + $dy
     # clamp into the working area of the screen under the pointer
-    $screen = [System.Windows.Forms.Screen]::FromPoint((New-Object System.Drawing.Point($form.Left + $SIZE / 2, $form.Top + $SIZE / 2)))
+    $center = [System.Drawing.Point]::new($form.Left + $SIZE / 2, $form.Top + $SIZE / 2)
+    $screen = [System.Windows.Forms.Screen]::FromPoint($center)
     $wa = $screen.WorkingArea
     $nx = [Math]::Max($wa.Left, [Math]::Min($wa.Right - $SIZE, $nx))
     $ny = [Math]::Max($wa.Top, [Math]::Min($wa.Bottom - $SIZE, $ny))
-    $form.Location = New-Object System.Drawing.Point($nx, $ny)
+    $form.Location = [System.Drawing.Point]::new($nx, $ny)
   }
 })
 $form.Add_MouseUp({
