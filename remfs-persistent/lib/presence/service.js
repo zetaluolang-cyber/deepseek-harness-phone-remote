@@ -328,9 +328,23 @@ export function createPresenceService(ctx, opts = {}) {
       const live = liveSessionIds()
       const prevStates = new Map(this._lastStates || [])
       const tasks = []
+      let droppedNoId = 0
       for (const record of list) {
         const t = await aggregateSession(record, wsMap, live, now, prevStates)
         if (t) tasks.push(t)
+        else droppedNoId++
+      }
+      // Upstream-drift guard (the 942db92 failure class): listSessions()
+      // answered, but NO record carried an id in any of the shapes we know
+      // (record.id / record.sessionId / record.header.id). That is a DSH
+      // SessionRecord shape change, not "no sessions" — returning an innocent
+      // empty snapshot here is exactly how the Orb once showed Idle for days.
+      // Fail loud so the client can say "incompatible", not "all quiet".
+      // Code stays inside the FROZEN v1 vocabulary (adding codes is banned):
+      // 'sessions-unavailable' = "session query failed", which this is.
+      if (list.length > 0 && droppedNoId === list.length) {
+        return err('sessions-unavailable',
+          'sessionQuery returned ' + list.length + ' record(s) but none matched a known SessionRecord shape — DSH upstream may have changed; presence is unavailable, not idle')
       }
       // remember states for the next reconcile (transition guard)
       this._lastStates = new Map(tasks.map((t) => [t.sessionId, t.state]))
