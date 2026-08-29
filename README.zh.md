@@ -43,7 +43,7 @@ flowchart LR
 - **一键部署(自动装依赖)**——`install.ps1` 校验 Node 版本(^22.19 || >=24)、自动装 Node.js/Tailscale、引导一次性登录(登录后重新读取真实 MagicDNS 名,绝不伪造)、写启动脚本、开 HTTPS Serve、装插件、注册开机自启。
 - **Walk-on-LAN(默认关闭,可选开启)**——在 `%USERPROFILE%\.dsh\lan-on` 创建标记文件(或设环境变量 `DSH_REMFS_LAN=1`)后,才会信任局域网 IP 并启动局域网转发器;同一 Wi-Fi 下手机可绕过 Tailscale 直连 `http://192.168.x.x:3080`,`/remfs` 依旧设备认证。开启会扩大网络暴露面,所以必须显式选择。
 - **持久化插件**——loader 条目;host 通道随启动注册,客户端模块随页面加载。
-- **PC 顶置悬浮球**——`scripts/orb-widget.ps1`(双击 `scripts/start-orb-widget.cmd`,部署到 `~/.dsh/launcher`):零依赖 WinForms 小球,始终置顶显示最高优先级的 Agent 状态,可拖动(位置持久化),单击打开 Harness。轮询与网页悬浮球相同的任务数据(`/remfs-presence.json`)。
+- **PC 顶置悬浮球**——`scripts/orb-widget.ps1`(双击 `scripts/start-orb-widget.cmd`,部署到 `~/.dsh/launcher`):零依赖 WinForms 小球,始终置顶显示最高优先级的 Agent 状态,可拖动(位置持久化),单击打开 Harness。轮询与网页悬浮球相同的任务数据(`/remfs-presence.json`)。`install.ps1` 同时注册**登录自启**(Startup 文件夹条目;单实例,自启与 .cmd 不会叠加——删除 Startup 里的 `dsh-orb-widget.cmd` 即可关闭)。
 - **手机推送通知(关页面也能收到)**——可选的 Web Push 通道:手机注册同源 Service Worker(`/remfs-sw.js`),配对后订阅(使用 host 的 VAPID 公钥)。宿主在 NEEDS_USER/FAILED(及可选 DONE)状态变化时推送,标签页关闭也能收到。RFC 8291 加密为手写实现(零依赖),已与官方 RFC 测试向量逐字节对拍。需要 HTTPS(Tailscale HTTPS 或 localhost)。详见 [docs/presence-push.md](docs/presence-push.md)。
 - **设备配对与管理**——一次性配对码(10 分钟有效、仅一次);列出/吊销/吊销全部设备;凭据只存哈希。
 - **手机工作台**——新建会话/文件浏览双标签、面包屑、预览/编辑/上传/下载、工作区徽标、悬浮球、侧栏自动收起、中英双语。

@@ -37,6 +37,15 @@ $P_PRIORITY = @{ $P_NEEDS = 0; $P_FAILED = 1; $P_STALE = 2; $P_RUNNING = 3; $P_D
 $P_COLOR = @{ $P_IDLE = [System.Drawing.Color]::FromArgb(125, 132, 148); $P_RUNNING = [System.Drawing.Color]::FromArgb(74, 108, 247); $P_STALE = [System.Drawing.Color]::FromArgb(245, 158, 11); $P_NEEDS = [System.Drawing.Color]::FromArgb(251, 191, 36); $P_FAILED = [System.Drawing.Color]::FromArgb(239, 68, 68); $P_DONE = [System.Drawing.Color]::FromArgb(34, 197, 94); $P_DISC = [System.Drawing.Color]::FromArgb(156, 163, 175) }
 $P_GLYPH = @{ $P_IDLE = '○'; $P_RUNNING = '●'; $P_STALE = '◐'; $P_NEEDS = '!'; $P_FAILED = '×'; $P_DONE = '✓'; $P_DISC = '?' }
 
+# ── single-instance guard ───────────────────────────────────────────────────
+# The widget may be started by the Startup entry, the .cmd, or a manual
+# shortcut — only one ball may exist. Match only real launches
+# ("-File ...orb-widget.ps1"); diagnostic shells that merely mention the path
+# in their command line must not count.
+$others = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+  Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match '-File[^"]*orb-widget\.ps1' }
+if ($others) { exit 0 }
+
 # ── form ───────────────────────────────────────────────────────────────────
 $SIZE = 46
 $form = New-Object System.Windows.Forms.Form

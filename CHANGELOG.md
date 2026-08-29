@@ -2,6 +2,22 @@
 
 All notable changes to `@zetaluolang/remfs-persistent` and the deploy package.
 
+## [1.3.1] — 2026-08 (orb polish + instant presence)
+
+- **Brand DSH ball** — the PC orb now mirrors the in-page Orb: blue gradient
+  ball + white brand whale (same SVG path as the web Orb), state shown as a
+  colored ring + small corner badge instead of a full-ball glyph; quiet states
+  dim the ball, NEEDS_USER/FAILED pulse.
+- **Snapshotted presence route** — `presence.tasks()` decompresses every
+  persisted session log (zstd) and can take tens of seconds; the push
+  dispatcher caches its task snapshot and `GET /remfs-presence.json` serves
+  the cache, so the orb widget (and any script) gets an instant response
+  instead of timing out.
+- **Orb auto-start at logon** — `install.ps1` registers a Startup-folder
+  entry (`dsh-orb-widget.cmd`); the widget is single-instance (a second start
+  exits), so the auto-start and the double-click .cmd never stack. Remove the
+  Startup entry to disable.
+
 ## [1.3.0] — 2026-08 (PC topmost Orb + phone Web Push)
 
 - **PC always-on-top Orb widget** — `scripts/orb-widget.ps1` (+

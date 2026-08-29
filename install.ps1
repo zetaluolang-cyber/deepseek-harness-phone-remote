@@ -149,6 +149,24 @@ foreach ($f in @("orb-widget.ps1", "start-orb-widget.cmd")) {
     }
 }
 
+# Orb widget auto-start at logon: a .cmd in the per-user Startup folder (no
+# admin, no schtasks — schtasks /sc onlogon can be denied in restricted
+# contexts). The widget is single-instance, so the Startup entry and the
+# double-click .cmd never stack. Disable: delete "dsh-orb-widget.cmd" from
+# the Startup folder.
+$orbBin = Join-Path $scriptDir "orb-widget.ps1"
+if (Test-Path $orbBin) {
+    $startupDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
+    New-Item -ItemType Directory -Force -Path $startupDir | Out-Null
+    $startupCmd = "@echo off`r`n" +
+        "powershell.exe -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$orbBin`""
+    $startupPath = Join-Path $startupDir "dsh-orb-widget.cmd"
+    Set-Content -Path $startupPath -Value $startupCmd -Encoding ASCII
+    Write-Host "[OK] orb widget auto-start registered (Startup folder)" -ForegroundColor Green
+} else {
+    Write-Host "[!] orb-widget.ps1 missing - orb auto-start skipped" -ForegroundColor Yellow
+}
+
 # ---------- 3a. register the self-healing watchdog (create or update) ----------
 # Runs every 5 minutes as the current user with a hidden window. It checks
 # that OUR dsh process owns 127.0.0.1:3080 (command-line verified, never a

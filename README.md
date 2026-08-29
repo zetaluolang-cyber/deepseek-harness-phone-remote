@@ -82,6 +82,9 @@ authentication. Pairing and the filesystem capability layer are.
   zero-dependency WinForms ball that stays above every window, shows the
   highest-priority agent state, is draggable (position persisted), and opens
   the harness on click. Polls the same task DTOs (`/remfs-presence.json`).
+  `install.ps1` also registers **auto-start at logon** (a Startup-folder
+  entry; single-instance, so the auto-start and the .cmd never stack —
+  remove `dsh-orb-widget.cmd` from the Startup folder to disable).
 - **Phone push notifications (page closed)** — an opt-in Web Push path: the
   phone registers a same-origin service worker (`/remfs-sw.js`) and, once
   paired, subscribes with the host's VAPID key. The host pushes
