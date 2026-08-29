@@ -187,3 +187,42 @@ test('presence api v1: fail-closed errors carry frozen codes', async () => {
   assert.ok(Object.values(ERROR_CODES).includes(res.error.code),
     'error code must be in the frozen vocabulary: ' + res.error.code)
 })
+
+// The 942db92 regression class: listSessions() answers, but the record shape
+// has drifted (no id/sessionId/header.id on ANY record). That must be an
+// ERROR, never an innocent empty snapshot - an empty snapshot renders as
+// "Idle", and a silent Idle is how the drift went unnoticed the first time.
+test('presence tasks: whole-list SessionRecord shape drift is an error, not an empty snapshot', async () => {
+  const svc = createPresenceService(fakeCtx(
+    [{ uuid: 'x1', meta: {} }, { uuid: 'x2', meta: {} }], // unrecognizable shape
+    {},
+  ), { staleMinutes: 20 })
+  const res = await svc.tasks()
+  assert.equal(res.ok, false)
+  assert.equal(res.error.code, 'sessions-unavailable')
+  assert.match(res.error.message, /shape/)
+  assert.ok(Object.values(ERROR_CODES).includes(res.error.code), 'still inside the frozen vocabulary')
+})
+
+// ...but a PARTIAL drop (one malformed record among good ones) must not take
+// presence down: the good records still aggregate.
+test('presence tasks: a single malformed record is dropped, the rest aggregate', async () => {
+  const t0 = Date.now()
+  const svc = createPresenceService(fakeCtx(
+    [{ uuid: 'bad' }, { id: 's1', header: { createdAt: t0 } }],
+    { 's1': [{ seq: 1, type: 'turn/start', time: t0, data: { turn: 1 } }] },
+  ), { staleMinutes: 20 })
+  const res = await svc.tasks()
+  assert.equal(res.ok, true)
+  assert.equal(res.value.tasks.length, 1)
+  assert.equal(res.value.tasks[0].sessionId, 's1')
+})
+
+// A genuinely empty session list stays a normal empty snapshot (fresh
+// install), never a shape-drift error.
+test('presence tasks: zero sessions is an empty snapshot, not an error', async () => {
+  const svc = createPresenceService(fakeCtx([], {}), { staleMinutes: 20 })
+  const res = await svc.tasks()
+  assert.equal(res.ok, true)
+  assert.deepEqual(res.value.tasks, [])
+})

@@ -18,6 +18,12 @@
 # `dsh web` against the generated profile and verifies /remfs registration.
 # Windows PowerShell 5.1 compatible.
 $ErrorActionPreference = "Stop"
+# GitHub Actions runs `shell: pwsh` as `pwsh -command ". 'script'"` - an
+# UNCAUGHT terminating error inside a dot-sourced script prints red text and
+# then exits 0. That is exactly how the real-DSH boot below silently never ran
+# on Linux (Start-Process -WindowStyle threw at parse-of-arguments time, the
+# script died, the job stayed green). Trap everything and exit nonzero.
+trap { Write-Host "FATAL (uncaught): $_"; exit 1 }
 $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $root "harness-common.ps1")
 
@@ -129,26 +135,61 @@ try {
             $launcher = $nodeExe.Source
             $bootArgs = @($dshBin) + $bootArgs
         }
-        $p = Start-Process -FilePath $launcher -ArgumentList $bootArgs -WindowStyle Hidden `
-            -RedirectStandardOutput $log -RedirectStandardError "$log.err" -PassThru
+        # -WindowStyle is Windows-only: on Linux pwsh it throws at argument
+        # binding, which (see trap above) used to kill the script before the
+        # boot ever happened - while the job stayed green. Splat per-platform.
+        $spArgs = @{ FilePath = $launcher; ArgumentList = $bootArgs; PassThru = $true
+                     RedirectStandardOutput = $log; RedirectStandardError = "$log.err" }
+        if ($env:OS -eq 'Windows_NT') { $spArgs.WindowStyle = 'Hidden' }
+        $p = Start-Process @spArgs
         $registered = $false
         $pocket = $false
         for ($i = 0; $i -lt 90; $i++) {
             Start-Sleep -Seconds 2
             if (Test-Path $log) {
                 $txt = Get-Content $log -Raw -ErrorAction SilentlyContinue
-                if ($txt -match "host applied: /remfs \+ /pocket channels registered") {
-                    $registered = $true; $pocket = $true; break
+                # The exact suffix of the "host applied" line has changed twice
+                # (channels -> push dispatcher); anchor only on what the boot
+                # actually proves: the host applied and /remfs registered.
+                if ($txt -match "host applied: /remfs") {
+                    $registered = $true
+                    $pocket = ($txt -match "host applied: /remfs \+ /pocket")
+                    break
                 }
-                if ($txt -match "host applied: /remfs channel registered") { $registered = $true }
             }
-            if ($p.HasExited) { break }
+            if ($p -and $p.HasExited) { break }
         }
         if (-not $registered) {
-            Write-Error "real-DSH boot: /remfs never registered with the installer-generated patch. Log:`n$(Get-Content $log -Raw -ErrorAction SilentlyContinue)"
+            Write-Error "real-DSH boot: /remfs never registered with the installer-generated patch. Log:`n$(Get-Content $log -Raw -ErrorAction SilentlyContinue)`nStderr:`n$(Get-Content "$log.err" -Raw -ErrorAction SilentlyContinue)"
             exit 1
         }
         Write-Host "real-DSH boot: OK - /remfs registered using the installer-generated cordis.patch.yml (pocket: $pocket)"
+        # ---- client half: the module must actually be SERVED, not just the
+        # host channel registered. This is the other half of every upstream
+        # upgrade breakage (the loader row names a client module; if the web
+        # server does not serve it the phone gets a dead workbench and no
+        # error anywhere). Try the documented route shapes.
+        $clientOk = $false
+        $clientTried = @()
+        foreach ($route in @(
+            "http://127.0.0.1:3182/plugins/@zetaluolang/remfs-persistent/client.js",
+            "http://127.0.0.1:3182/plugins/remfs-persistent/client.js"
+        )) {
+            try {
+                $resp = Invoke-WebRequest -Uri $route -UseBasicParsing -TimeoutSec 10
+                $clientTried += "$route -> HTTP $($resp.StatusCode), $($resp.Content.Length) bytes"
+                if ($resp.StatusCode -eq 200 -and $resp.Content -match "remfs") { $clientOk = $true; break }
+            } catch {
+                $clientTried += "$route -> $($_.Exception.Message)"
+            }
+        }
+        if ($clientOk) {
+            Write-Host "real-DSH boot: OK - client module served ($($clientTried[-1]))"
+        } else {
+            Write-Error "real-DSH boot: client module NOT served - the phone would get a dead workbench.`n$($clientTried -join "`n")"
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            exit 1
+        }
         Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 1
     }

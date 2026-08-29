@@ -29,6 +29,38 @@ window.__ModuleLoader__.load({
       handle: '.pI_x6G_handle',
     }
 
+    // Runtime drift watchdog for the selector coupling above. These are
+    // GENERATED CSS-module class names: a DSH rebuild can invalidate every one
+    // of them and the only symptom is the mobile layout quietly degrading
+    // (see 942db92 for how long a silent presence failure survived). Audited
+    // once after the shell has rendered; result is exposed for debugging and,
+    // when EVERY selector is gone (an upstream rebuild, not a partial screen),
+    // a one-line notice is shown in the workbench.
+    const selectorAudit = { done: false, missing: [], total: 0, allMissing: false }
+    function auditUpstreamSelectors() {
+      if (selectorAudit.done) return selectorAudit
+      selectorAudit.done = true
+      try {
+        const entries = Object.entries(UPSTREAM_SELECTORS)
+        selectorAudit.total = entries.length
+        for (const [name, sel] of entries) {
+          if (!document.querySelector(sel)) selectorAudit.missing.push(name + ' (' + sel + ')')
+        }
+        selectorAudit.allMissing = selectorAudit.missing.length === selectorAudit.total
+        if (selectorAudit.allMissing) {
+          console.warn('[remfs-persistent] UPSTREAM DRIFT: none of the ' + selectorAudit.total +
+            ' DSH CSS-module selectors matched — the DSH build has changed and the mobile layout adapter is inactive. Update UPSTREAM_SELECTORS in client.js.')
+        } else if (selectorAudit.missing.length > 0) {
+          console.warn('[remfs-persistent] selector audit: ' + selectorAudit.missing.length + '/' +
+            selectorAudit.total + ' upstream selectors unmatched (may be off-screen views): ' + selectorAudit.missing.join(', '))
+        }
+      } catch { /* audit is diagnostics only */ }
+      try { window.__remfsSelectorAudit = selectorAudit } catch { /* ignore */ }
+      return selectorAudit
+    }
+    // Delayed so the DSH shell has finished its first render.
+    try { setTimeout(auditUpstreamSelectors, 5000) } catch { /* ignore */ }
+
     const CSS = `
 .remfs-block{background:var(--dsw-specific-sidebar-fill,#202024);color:var(--dsw-alias-label-primary,#eee);display:flex;flex-direction:column;font-size:13px;font-family:system-ui,sans-serif;height:min(640px,74vh);min-height:340px;border:1px solid rgba(128,128,128,.2);border-radius:10px;overflow:hidden}
 .remfs-panel{position:fixed;right:0;top:0;bottom:0;width:min(430px,96vw);background:var(--dsw-specific-sidebar-fill,#202024);color:var(--dsw-alias-label-primary,#eee);z-index:120;box-shadow:-8px 0 24px rgba(0,0,0,.35);display:flex;flex-direction:column;font-size:13px;font-family:system-ui,sans-serif}
@@ -39,6 +71,7 @@ window.__ModuleLoader__.load({
 .remfs-tab{background:transparent;border:none;color:var(--dsw-alias-label-secondary,#999);font-size:13px;padding:6px 12px;cursor:pointer;border-bottom:2px solid transparent;border-radius:0}
 .remfs-tab.on{color:var(--dsw-alias-label-primary,#eee);border-bottom-color:#4a6cf7}
 .remfs-body{flex:1;display:flex;flex-direction:column;min-height:0}
+.remfs-drift{padding:6px 12px;font-size:11px;color:#f59e0b;background:rgba(245,158,11,.08);border-bottom:1px solid rgba(245,158,11,.25)}
 .remfs-crumb{display:flex;gap:4px;padding:6px 12px 0;align-items:center;overflow-x:auto;flex:none}
 .remfs-crumb .remfs-chip{flex:none}
 .remfs-chip.cur{opacity:.7;cursor:default}
@@ -240,6 +273,8 @@ window.__ModuleLoader__.load({
         pushToggle: '推送通知(关页面也能收到「需要你」)', pushUnsupported: '需 HTTPS(localhost 或 Tailscale HTTPS)', pushEnableErr: '推送不可用,请确认已连接 Tailscale HTTPS',
         rootOutside: '新增目录必须在已批准目录内——在电脑上编辑 .remfs-roots.json 添加新位置',
         authFailed: '设备未授权,请重新配对', capDenied: '此设备没有执行该操作所需的权限',
+        orbUnavail: 'Presence 不可用', orbUnavailHint: '主机无法读取会话(DSH 版本可能不兼容)',
+        upstreamDrift: '⚠ DSH 界面结构已变化,移动端布局适配可能失效(功能不受影响)',
         encNotUtf8: '检测到非 UTF-8 编码,请转为 UTF-8 后重试'
       },
       en: {
@@ -281,6 +316,8 @@ window.__ModuleLoader__.load({
         pushToggle: 'Push notifications (get "needs you" with the page closed)', pushUnsupported: 'needs HTTPS (localhost or Tailscale HTTPS)', pushEnableErr: 'Push unavailable — check you are on Tailscale HTTPS',
         rootOutside: 'New roots must stay inside approved roots — edit .remfs-roots.json on the PC to add new locations',
         authFailed: 'Device not authorized — please pair again', capDenied: 'This device does not have permission for that operation',
+        orbUnavail: 'Presence unavailable', orbUnavailHint: 'Host cannot read sessions (DSH version may be incompatible)',
+        upstreamDrift: '⚠ DSH UI structure changed — mobile layout tweaks may be inactive (features unaffected)',
         encNotUtf8: 'Non-UTF-8 encoding detected — convert to UTF-8 and retry'
       }
     }
@@ -533,6 +570,7 @@ window.__ModuleLoader__.load({
       const [peekOpen, setPeekOpen] = React.useState(false)
       const [notified, setNotified] = React.useState({}) // state-per-session notification dedup
       const [lastOrb, setLastOrb] = React.useState(null)
+      const [presenceErr, setPresenceErr] = React.useState(null) // host error code, or null
       const [pos, setPos] = React.useState(() => {
         try {
           const raw = window.localStorage.getItem('remfs-orb-pos')
@@ -558,7 +596,15 @@ window.__ModuleLoader__.load({
 
       const refresh = () => {
         pocketRpc(conn, 'presence.tasks', {}).then((r) => {
-          if (!(r && r.ok)) return
+          // A host-reported error (capability-unavailable, sessions-shape-
+          // mismatch, …) means presence is BROKEN, not quiet. Swallowing it
+          // left the Orb on "Idle" — the 942db92 silent-failure mode. Surface
+          // it as a distinct unavailable state instead.
+          if (!(r && r.ok)) {
+            setPresenceErr((r && r.error && r.error.code) || 'unknown')
+            return
+          }
+          setPresenceErr(null)
           const list = (r.value && r.value.tasks) || []
           setTasks(list)
           // notification rules (design §14): NEEDS_USER/FAILED always; DONE
@@ -623,8 +669,14 @@ window.__ModuleLoader__.load({
         dragRef.current = null
       }
 
-      const orb = orbStateLocal(lastOrb)
-      const qp = quickPeekLocal(lastOrb)
+      // Presence errors override the task-derived state: an Orb that cannot
+      // see the sessions must say so, never impersonate "Idle".
+      const orb = presenceErr
+        ? { icon: '?', text: t('orbUnavail'), state: P_DISC, taskId: null, title: '', summary: '' }
+        : orbStateLocal(lastOrb)
+      const qp = presenceErr
+        ? { state: P_DISC, icon: '?', text: t('orbUnavail'), title: t('orbUnavailHint') + ' (' + presenceErr + ')', summary: '', staleReason: [], lastProgressLabel: '', taskId: null }
+        : quickPeekLocal(lastOrb)
       const paired = getCred() !== null
       const orbQuiet = orb.state === P_IDLE || orb.state === P_DONE || orb.state === P_DISC
       const orbAlert = orb.state === P_NEEDS || orb.state === P_FAILED
@@ -1246,6 +1298,9 @@ window.__ModuleLoader__.load({
           React.createElement('button', { className: 'remfs-btn', title: lang === 'zh' ? 'English' : '中文', onClick: toggleLang }, t('otherLang')),
           React.createElement('button', { className: 'remfs-btn remfs-close', onClick: onClose }, t('close'))
         ),
+        (selectorAudit.done && selectorAudit.allMissing)
+          ? React.createElement('div', { className: 'remfs-drift' }, t('upstreamDrift'))
+          : null,
         React.createElement('div', { className: 'remfs-tabs' },
           React.createElement('button', { className: 'remfs-tab' + (tab === 'session' ? ' on' : ''), onClick: () => setTab('session') }, t('tabSession')),
           React.createElement('button', { className: 'remfs-tab' + (tab === 'files' ? ' on' : ''), onClick: () => setTab('files') }, t('tabFiles'))
