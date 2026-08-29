@@ -61,20 +61,30 @@ $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
 $form.ShowInTaskbar = $false
 $form.TopMost = $true
-$form.BackColor = [System.Drawing.Color]::Magenta # transparent key
-$form.TransparencyKey = [System.Drawing.Color]::Magenta
-$null = $form.Handle # force handle creation so the DPI query returns real values
 
-# crisp DPI-scaled geometry (46 px ball at 96 DPI; scales on HiDPI screens)
+# crisp DPI-scaled geometry (46 px ball at 96 DPI; scales on HiDPI screens).
+# DPI is queried from the SCREEN graphics (IntPtr.Zero) — never force the
+# form handle here: creating the handle and then resizing breaks
+# TransparencyKey (the background renders as the key color = purple square).
 $dpiScale = 1.0
 try {
-  $g0 = [System.Drawing.Graphics]::FromHwnd($form.Handle)
+  $g0 = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero)
   $dpiScale = $g0.DpiX / 96.0
   $g0.Dispose()
 } catch { }
 $SIZE = [int][Math]::Round(46 * $dpiScale)
 $TAG_H = [int][Math]::Round(22 * $dpiScale)
+
+# All size/transparency properties set BEFORE the handle exists (lazy
+# creation at first Show) — this is what keeps the magenta color key
+# transparent. DoubleBuffered (via reflection: the property is protected)
+# kills the flicker from the 40 ms animation repaints.
 $form.ClientSize = [System.Drawing.Size]::new($SIZE, $SIZE + $TAG_H)
+$form.BackColor = [System.Drawing.Color]::Magenta # transparent key
+$form.TransparencyKey = [System.Drawing.Color]::Magenta
+try {
+  $form.GetType().GetProperty('DoubleBuffered', [System.Reflection.BindingFlags]'Instance,NonPublic').SetValue($form, $true, $null)
+} catch { }
 
 # restore persisted position (clamped to a screen working area)
 try {
