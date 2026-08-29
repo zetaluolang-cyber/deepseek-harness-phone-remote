@@ -100,6 +100,8 @@ export const STATE_LABEL = Object.freeze({
 export const PRESENCE_OPS = Object.freeze({
   STATUS: 'presence.status',
   TASKS: 'presence.tasks',
+  PUSH_SUBSCRIBE: 'push.subscribe',
+  PUSH_UNSUBSCRIBE: 'push.unsubscribe',
 })
 
 /**

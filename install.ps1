@@ -140,6 +140,15 @@ foreach ($f in @("tailscale_forward.js", "restart_harness.ps1", "restart_harness
     }
 }
 
+# Orb widget (always-on-top presence ball): copied from scripts/ so the
+# double-click launcher (start-orb-widget.cmd) works after deploy.
+foreach ($f in @("orb-widget.ps1", "start-orb-widget.cmd")) {
+    $widgetSrc = Join-Path $src "scripts\$f"
+    if (Test-Path $widgetSrc) {
+        Copy-Item $widgetSrc (Join-Path $scriptDir $f) -Force
+    }
+}
+
 # ---------- 3a. register the self-healing watchdog (create or update) ----------
 # Runs every 5 minutes as the current user with a hidden window. It checks
 # that OUR dsh process owns 127.0.0.1:3080 (command-line verified, never a

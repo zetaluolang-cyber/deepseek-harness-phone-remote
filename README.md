@@ -77,6 +77,18 @@ authentication. Pairing and the filesystem capability layer are.
   so it is an explicit choice.
 - **Persistent plugin** — loader entry; host channel registers at startup, the
   client module loads on every page. No re-running after refresh.
+- **PC always-on-top Orb** — `scripts/orb-widget.ps1` (double-click
+  `scripts/start-orb-widget.cmd`, deployed to `~/.dsh/launcher`): a
+  zero-dependency WinForms ball that stays above every window, shows the
+  highest-priority agent state, is draggable (position persisted), and opens
+  the harness on click. Polls the same task DTOs (`/remfs-presence.json`).
+- **Phone push notifications (page closed)** — an opt-in Web Push path: the
+  phone registers a same-origin service worker (`/remfs-sw.js`) and, once
+  paired, subscribes with the host's VAPID key. The host pushes
+  NEEDS_USER/FAILED (and DONE when enabled) transitions even with the tab
+  closed. RFC 8291 encryption implemented from scratch (zero deps), verified
+  against the official RFC test vector. HTTPS required (Tailscale HTTPS or
+  localhost). See [docs/presence-push.md](docs/presence-push.md).
 - **Device pairing & management** — one-time pairing code (10 min TTL, single
   use); list / revoke / revoke-all devices; credentials stored only as hashes.
 - **Mobile-first workbench** — New Session / Files tabs, breadcrumbs, preview /
@@ -112,7 +124,11 @@ authentication. Pairing and the filesystem capability layer are.
 - **The presence read-only fence is an operator switch**: by default the
   Orb/Task Board work unauthenticated inside the browser-trust fence; setting
   `pocketStrict: true` in `~/.dsh/remfs-options.json` requires a valid device
-  credential for every `/pocket` call.
+  credential for every `/pocket` call (and for `/remfs-presence.json`).
+- **Push subscriptions are paired-device-only**: registering a subscription
+  requires a valid device credential; revoked devices are pruned within a
+  minute; task titles/summaries are pushed only to paired devices. VAPID keys
+  live in `~/.dsh/remfs-push.json` (never in the repo).
 - **Tailscale ACLs should be hardened** to phone-only access on 443/3080 — see
   [docs/tailscale-acls.md](docs/tailscale-acls.md).
 - See [SECURITY.md](SECURITY.md) for the full threat model (what we do and do
@@ -201,6 +217,9 @@ tight), a compromised host, or a compromised Tailscale account. Details in
 | Plugin never appears after `dsh plugin add` | You must also append the loader row and restart `dsh web` |
 | PC sleeps | keep_awake + power plan are handled by the deploy; see `keep_awake.ps1` |
 | Harness keeps dying / phone unreachable | Check `%USERPROFILE%\.dsh\launcher\watchdog.log`; re-run `install.ps1` to (re)register the watchdog task |
+| Orb widget shows `?` / "Disconnected" | The harness or the forwarder is down — check the watchdog log and `127.0.0.1:3080` |
+| Push toggle disabled ("needs HTTPS") | Open the harness via Tailscale HTTPS or `http://localhost:3080`; plain-LAN HTTP can't host a service worker — see [docs/presence-push.md](docs/presence-push.md) |
+| No phone push with the page closed | See [docs/presence-push.md](docs/presence-push.md) → Troubleshooting |
 
 ## Tested devices
 
@@ -223,6 +242,8 @@ tight), a compromised host, or a compromised Tailscale account. Details in
 - [x] /pocket strict mode (opt-in via `~/.dsh/remfs-options.json`)
 - [x] Tailscale ACL hardening guide
 - [x] Desktop shortcut automation (install.ps1)
+- [x] PC always-on-top Orb widget (scripts/orb-widget.ps1, zero-dependency WinForms)
+- [x] Phone Web Push notifications with the page closed (RFC 8291, opt-in per paired device)
 - [ ] More device resolutions validation
 - [ ] Upstream contributions (see below)
 

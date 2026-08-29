@@ -43,6 +43,8 @@ flowchart LR
 - **一键部署(自动装依赖)**——`install.ps1` 校验 Node 版本(^22.19 || >=24)、自动装 Node.js/Tailscale、引导一次性登录(登录后重新读取真实 MagicDNS 名,绝不伪造)、写启动脚本、开 HTTPS Serve、装插件、注册开机自启。
 - **Walk-on-LAN(默认关闭,可选开启)**——在 `%USERPROFILE%\.dsh\lan-on` 创建标记文件(或设环境变量 `DSH_REMFS_LAN=1`)后,才会信任局域网 IP 并启动局域网转发器;同一 Wi-Fi 下手机可绕过 Tailscale 直连 `http://192.168.x.x:3080`,`/remfs` 依旧设备认证。开启会扩大网络暴露面,所以必须显式选择。
 - **持久化插件**——loader 条目;host 通道随启动注册,客户端模块随页面加载。
+- **PC 顶置悬浮球**——`scripts/orb-widget.ps1`(双击 `scripts/start-orb-widget.cmd`,部署到 `~/.dsh/launcher`):零依赖 WinForms 小球,始终置顶显示最高优先级的 Agent 状态,可拖动(位置持久化),单击打开 Harness。轮询与网页悬浮球相同的任务数据(`/remfs-presence.json`)。
+- **手机推送通知(关页面也能收到)**——可选的 Web Push 通道:手机注册同源 Service Worker(`/remfs-sw.js`),配对后订阅(使用 host 的 VAPID 公钥)。宿主在 NEEDS_USER/FAILED(及可选 DONE)状态变化时推送,标签页关闭也能收到。RFC 8291 加密为手写实现(零依赖),已与官方 RFC 测试向量逐字节对拍。需要 HTTPS(Tailscale HTTPS 或 localhost)。详见 [docs/presence-push.md](docs/presence-push.md)。
 - **设备配对与管理**——一次性配对码(10 分钟有效、仅一次);列出/吊销/吊销全部设备;凭据只存哈希。
 - **手机工作台**——新建会话/文件浏览双标签、面包屑、预览/编辑/上传/下载、工作区徽标、悬浮球、侧栏自动收起、中英双语。
 - **host 层保护路径**——系统目录、AppData、凭据/密钥文件(`.credentials.yaml`/`.ssh`/`.aws`/`.gnupg`/`.env`/`id_rsa`/`*.pem` 等)与隐私数据目录(微信/WPS)无论白名单如何都拦截。
@@ -56,7 +58,8 @@ flowchart LR
 - **文件白名单是主要文件权限边界**:远程客户端只能*收窄*白名单;扩大(`C:\`、新盘符)必须在本机编辑 `.remfs-roots.json`。
 - **路径逃逸双重防御**:带 `..`/UNC 的原始路径直接拒绝;规范后的 realpath 必须落在白名单内(符号链接/junction 逃逸失败)。
 - **远端写入有编码保护**:上传/编辑非 UTF-8 文件(UTF-16 BOM、GBK/ANSI 字节)会被拒绝而不是写坏;编辑写回时保留原文件的 UTF-8 BOM 与换行风格(CRLF/LF)。
-- **presence 只读围栏是运维开关**:默认 Orb/任务板在浏览器信任围栏内免认证可用;在 `~/.dsh/remfs-options.json` 设 `pocketStrict: true` 后,所有 `/pocket` 调用都必须携带有效设备凭据。
+- **presence 只读围栏是运维开关**:默认 Orb/任务板在浏览器信任围栏内免认证可用;在 `~/.dsh/remfs-options.json` 设 `pocketStrict: true` 后,所有 `/pocket` 调用(含 `/remfs-presence.json`)都必须携带有效设备凭据。
+- **推送订阅只属于已配对设备**:注册订阅需要有效设备凭据;被吊销设备的订阅一分钟后清理;任务标题/摘要只推送给已配对设备。VAPID 密钥存于 `~/.dsh/remfs-push.json`(绝不进仓库)。
 - **Tailscale ACL 建议硬化**为仅手机可访问 443/3080——见 [docs/tailscale-acls.md](docs/tailscale-acls.md)。
 - 完整威胁模型见 [SECURITY.md](SECURITY.md);升级前备份与验证清单见 [docs/upgrade.md](docs/upgrade.md)。
 
@@ -117,6 +120,9 @@ dsh plugin --profile web add @zetaluolang/remfs-persistent
 | `dsh plugin add` 后插件没出现 | 必须补 loader 行并重启 `dsh web` |
 | 电脑睡眠 | 部署已处理 keep_awake + 电源计划,见 `keep_awake.ps1` |
 | harness 反复挂掉/手机连不上 | 查看 `%USERPROFILE%\.dsh\launcher\watchdog.log`;重跑 `install.ps1`(重新)注册看门狗任务 |
+| 顶置球显示 `?`/“Disconnected” | harness 或转发器挂了——查看门狗日志与 `127.0.0.1:3080` |
+| 推送开关置灰(“需 HTTPS”) | 用 Tailscale HTTPS 或 `http://localhost:3080` 打开 Harness;纯局域网 HTTP 无法注册 Service Worker——见 [docs/presence-push.md](docs/presence-push.md) |
+| 关页面后收不到推送 | 见 [docs/presence-push.md](docs/presence-push.md) → 常见问题 |
 
 ## 实测设备
 
@@ -137,6 +143,8 @@ dsh plugin --profile web add @zetaluolang/remfs-persistent
 - [x] /pocket 严格模式(可选,`~/.dsh/remfs-options.json`)
 - [x] Tailscale ACL 加固指南
 - [x] 桌面快捷方式自动化(install.ps1)
+- [x] PC 顶置悬浮球(scripts/orb-widget.ps1,零依赖 WinForms)
+- [x] 手机 Web Push 通知(关页面也能收到,RFC 8291,按设备可选)
 - [ ] 更多分辨率验证
 - [ ] 上游贡献
 

@@ -237,6 +237,7 @@ window.__ModuleLoader__.load({
         pairedToast: '✅ 配对成功', pairFailed: '配对失败',
         devicesTitle: '已配对设备', revokeBtn: '吊销', revokeAllBtn: '吊销全部',
         revokedToast: '✅ 已吊销', noDevices: '暂无设备', devMgmt: '🔐 设备管理',
+        pushToggle: '推送通知(关页面也能收到「需要你」)', pushUnsupported: '需 HTTPS(localhost 或 Tailscale HTTPS)', pushEnableErr: '推送不可用,请确认已连接 Tailscale HTTPS',
         rootOutside: '新增目录必须在已批准目录内——在电脑上编辑 .remfs-roots.json 添加新位置',
         authFailed: '设备未授权,请重新配对',
         encNotUtf8: '检测到非 UTF-8 编码,请转为 UTF-8 后重试'
@@ -277,6 +278,7 @@ window.__ModuleLoader__.load({
         pairedToast: '✅ Paired', pairFailed: 'Pairing failed',
         devicesTitle: 'Paired devices', revokeBtn: 'Revoke', revokeAllBtn: 'Revoke all',
         revokedToast: '✅ Revoked', noDevices: 'No devices', devMgmt: '🔐 Devices',
+        pushToggle: 'Push notifications (get "needs you" with the page closed)', pushUnsupported: 'needs HTTPS (localhost or Tailscale HTTPS)', pushEnableErr: 'Push unavailable — check you are on Tailscale HTTPS',
         rootOutside: 'New roots must stay inside approved roots — edit .remfs-roots.json on the PC to add new locations',
         authFailed: 'Device not authorized — please pair again',
         encNotUtf8: 'Non-UTF-8 encoding detected — convert to UTF-8 and retry'
@@ -325,6 +327,95 @@ window.__ModuleLoader__.load({
         window.localStorage.removeItem('remfs-device-id')
         window.localStorage.removeItem('remfs-device-credential')
       } catch { /* ignore */ }
+    }
+
+    // ── Web Push (phone notifications with the page closed) ────────────────
+    // The phone registers the service worker served at /remfs-sw.js (same
+    // origin) and, once paired + opted in, subscribes to push with the VAPID
+    // public key from /remfs-push-vapid.json. The subscription is reported to
+    // the host via /pocket push.subscribe (device-authenticated); the host
+    // then pushes NEEDS_USER/FAILED (and DONE when enabled) transitions even
+    // when the phone tab is closed. Requires a secure context: HTTPS via
+    // Tailscale, or http://localhost. Plain-LAN (http://192.168.x.x) and
+    // Tailscale-IP HTTP cannot register a service worker.
+    const pushEnabled = () => { try { return window.localStorage.getItem('remfs-push-enabled') === '1' } catch { return false } }
+    const setPushEnabledFlag = (v) => { try { window.localStorage.setItem('remfs-push-enabled', v ? '1' : '0') } catch { /* ignore */ } }
+    const pushSupported = () => {
+      try {
+        if (window.isSecureContext !== true) return false
+        if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return false
+        if (typeof Notification === 'undefined' || typeof PushManager === 'undefined') return false
+        return true
+      } catch { return false }
+    }
+    const b64urlFromBytes = (buf) => {
+      let s = ''
+      for (const b of buf) s += String.fromCharCode(b)
+      try { return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') } catch { return '' }
+    }
+    const urlBase64ToUint8Array = (b64) => {
+      const raw = String(b64).replace(/=+$/, '').replace(/-/g, '+').replace(/_/g, '/')
+      const bin = atob(raw)
+      const arr = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i)
+      return arr
+    }
+
+    /** Subscribe (or refresh) the push subscription for the CURRENT device. */
+    const ensurePushSubscription = async (conn, reg) => {
+      const cred = getCred()
+      if (!cred || !reg) return null
+      try {
+        let sub = await reg.pushManager.getSubscription()
+        if (!sub) {
+          const r = await window.fetch('/remfs-push-vapid.json', { cache: 'no-store' }).then((x) => x.json())
+          const key = r && r.ok && r.value && r.value.publicKeyB64
+          if (!key) return null
+          sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(key) })
+        }
+        const p256dh = sub.getKey('p256dh') ? b64urlFromBytes(sub.getKey('p256dh')) : ''
+        const auth = sub.getKey('auth') ? b64urlFromBytes(sub.getKey('auth')) : ''
+        if (!p256dh || !auth) return null
+        let lang = 'zh'
+        try { lang = window.localStorage.getItem('remfs-lang') === 'en' ? 'en' : 'zh' } catch { /* default zh */ }
+        return conn.rpc.call('/pocket', 'push.subscribe', {
+          deviceId: cred.deviceId, credential: cred.credential, lang,
+          subscription: { endpoint: sub.endpoint, keys: { p256dh, auth } },
+        })
+      } catch { return null }
+    }
+
+    /** Unsubscribe from push and tell the host to forget the endpoint. */
+    const disablePush = async (conn, reg) => {
+      setPushEnabledFlag(false)
+      try {
+        const cred = getCred()
+        if (reg) {
+          const sub = await reg.pushManager.getSubscription()
+          if (sub) {
+            if (cred) {
+              try {
+                await conn.rpc.call('/pocket', 'push.unsubscribe', {
+                  deviceId: cred.deviceId, credential: cred.credential, endpoint: sub.endpoint,
+                })
+              } catch { /* ignore */ }
+            }
+            try { await sub.unsubscribe() } catch { /* ignore */ }
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    /** Register the service worker and (when paired + opted in) subscribe. */
+    const setupPush = async (conn) => {
+      if (!pushSupported()) return { supported: false }
+      try {
+        const reg = await navigator.serviceWorker.register('/remfs-sw.js')
+        await navigator.serviceWorker.ready
+        reg.addEventListener('pushsubscriptionchange', () => { ensurePushSubscription(conn, reg) })
+        if (getCred() && pushEnabled()) ensurePushSubscription(conn, reg)
+        return { supported: true, reg }
+      } catch { return { supported: false } }
     }
 
     const friendlyErr = (msg, code) => {
@@ -701,6 +792,21 @@ window.__ModuleLoader__.load({
       const [pairing, setPairing] = React.useState(false)
       const [devicesOpen, setDevicesOpen] = React.useState(false)
       const [devices, setDevices] = React.useState([])
+      const [pushReg, setPushReg] = React.useState(null)
+      const [pushOk, setPushOk] = React.useState(pushSupported())
+      React.useEffect(() => {
+        // The service worker registration resolves asynchronously in apply();
+        // grab it when it appears so the toggle can subscribe with it.
+        let alive = true
+        const grab = () => {
+          if (!alive) return
+          const reg = window.__remfsPushReg
+          if (reg) setPushReg(reg)
+          else setTimeout(grab, 400)
+        }
+        grab()
+        return () => { alive = false }
+      }, [])
 
       const rpc = (method, payload) => {
         const c = getCred()
@@ -728,6 +834,8 @@ window.__ModuleLoader__.load({
             setPairCode(''); setDeviceName('')
             showToast(t('pairedToast'), 'success')
             refresh(null)
+            // If push is opted in, subscribe with the freshly paired identity.
+            if (pushEnabled() && window.__remfsPushReg) ensurePushSubscription(conn, window.__remfsPushReg)
           } else {
             const fe = friendlyErr((r && r.error && r.error.message) || t('pairFailed'), r && r.error && r.error.code)
             setError(fe)
@@ -761,6 +869,28 @@ window.__ModuleLoader__.load({
           if (r && r.ok) { showToast(t('revokedToast'), 'success'); loadDevices() }
           else if (noteAuth(r)) { /* pairing UI */ }
         }).catch(() => {})
+      }
+
+      // ── Web Push toggle (Devices pane) ────────────────────────────────────
+      // Enabling requests notification permission (if needed) and subscribes
+      // through the host (/pocket push.subscribe). Disabling unsubscribes and
+      // tells the host to drop the endpoint.
+      const onTogglePush = (on) => {
+        if (on) {
+          setPushEnabledFlag(true)
+          const doSubscribe = () => { ensurePushSubscription(conn, pushReg).then((r) => { if (r && !r.ok) showToast(t('pushEnableErr'), 'error') }) }
+          if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+            Notification.requestPermission().then((p) => {
+              if (p === 'granted') doSubscribe()
+              else { setPushEnabledFlag(false); forceLang((n) => n + 1) }
+            })
+          } else {
+            doSubscribe()
+          }
+        } else {
+          disablePush(conn, pushReg)
+        }
+        forceLang((n) => n + 1)
       }
 
       const load = (p, fallback) => {
@@ -1006,6 +1136,11 @@ window.__ModuleLoader__.load({
           React.createElement('span', { style: { color: 'var(--dsw-alias-label-secondary,#999)' } }, new Date(d.lastSeen).toLocaleString()),
           React.createElement('button', { className: 'remfs-btn', onClick: () => doRevoke(d.id) }, t('revokeBtn'))
         )),
+        React.createElement('label', { className: 'remfs-hidebox', style: { marginTop: 8, borderTop: '1px solid rgba(128,128,128,.25)', paddingTop: 8 }, title: t('pushUnsupported') },
+          React.createElement('input', { type: 'checkbox', checked: pushEnabled(), disabled: !pushOk, onChange: (e) => onTogglePush(e.target.checked) }),
+          t('pushToggle'),
+          pushOk ? null : React.createElement('span', { style: { color: 'var(--dsw-alias-label-secondary,#999)', fontSize: 11 } }, ' · ' + t('pushUnsupported'))
+        ),
         React.createElement('div', { className: 'remfs-tools' },
           React.createElement('button', { className: 'remfs-btn', onClick: () => { setDevicesOpen(false); setMoreOpen(true) } }, t('cancel')),
           React.createElement('button', { className: 'remfs-btn', style: { color: '#e06c6c' }, onClick: doRevokeAll }, t('revokeAllBtn'))
@@ -1274,6 +1409,13 @@ window.__ModuleLoader__.load({
         { name: 'shell.overlay', id: 'remfs.presence.board' },
         () => React.createElement(PresenceBoardOverlay, { conn })
       ))
+
+      // Web Push: register the service worker once per page; subscription is
+      // (re)established when a paired device has push enabled. The resulting
+      // registration is shared with the Workbench via __remfsPushReg.
+      setupPush(conn).then((r) => {
+        if (r && r.reg) { try { window.__remfsPushReg = r.reg } catch { /* ignore */ } }
+      })
     }
 
     const inject = ['slots', 'connection', 'workspaces', 'sessions']

@@ -2,6 +2,42 @@
 
 All notable changes to `@zetaluolang/remfs-persistent` and the deploy package.
 
+## [1.3.0] — 2026-08 (PC topmost Orb + phone Web Push)
+
+- **PC always-on-top Orb widget** — `scripts/orb-widget.ps1` (+
+  `start-orb-widget.cmd`, deployed to `~/.dsh/launcher/` by `install.ps1`): a
+  zero-dependency WinForms ball that stays above every window. Shows the
+  highest-priority agent state (same task DTOs as the in-page Orb, via the new
+  `GET /remfs-presence.json` route), drag-to-move with persisted position,
+  click-to-open the harness, right-click menu, hover tooltip with the task
+  title. State colors/glyphs mirror the web Orb; NEEDS_USER/FAILED pulse.
+- **Phone Web Push with the page closed** — an opt-in, per-paired-device push
+  path: the host serves the service worker at `/remfs-sw.js` (same origin,
+  registered through the harness `webServer`; the SW has no fetch handler) and
+  the VAPID public key at `/remfs-push-vapid.json`. The Devices pane gains a
+  "Push notifications" toggle that subscribes through `/pocket push.subscribe`
+  (auth-required) and reports the subscription to `~/.dsh/remfs-push.json`.
+  A host dispatcher polls `presence.tasks()` and pushes NEEDS_USER / FAILED
+  (always) and DONE (when `remfs-options.json` `push.done` is true), deduped
+  per `sessionId:STATE` (persisted, 7-day prune). Revoked devices are pruned
+  within a minute. Requires a secure context (Tailscale HTTPS or localhost).
+- **RFC 8291 / 8292 from scratch, zero dependencies** — `lib/push/vapid.js`
+  (VAPID ES256 JWT), `lib/push/webpush.js` (aes128gcm; exact RFC 8291 §3.4 key
+  schedule + RFC 8188 wire format with empty AAD), `lib/push/store.js`
+  (durable store, atomic writes, corrupt-file quarantine), `lib/push/http.js`
+  (route handlers), `lib/push/controller.js` (presence-driven dispatcher).
+  Verified **byte-for-byte against the RFC 8291 Appendix A / §5 official test
+  vector** and cross-checked with the reference `web-push` package
+  (`scripts/interop-webpush-check.mjs`).
+- **Read-only presence over plain HTTP** — `GET /remfs-presence.json` serves
+  the same task DTOs the Orb renders (useful for scripts/widgets); respects
+  `pocketStrict` via `x-remfs-device-id` / `x-remfs-credential` headers.
+- **Docs** — new [docs/presence-push.md](docs/presence-push.md) (architecture,
+  privacy, operator switches, platform notes, troubleshooting); README (EN/zh)
+  features/security/troubleshooting/roadmap updated.
+- Tests: 143 green (was 128), including the RFC vector, push-store lifecycle,
+  and the extended remfs-options contract.
+
 ## [1.2.1] — 2026-08 (presence-orb UX polish)
 
 - **Calm by default** — the Orb no longer glows/bobs permanently: IDLE / DONE /

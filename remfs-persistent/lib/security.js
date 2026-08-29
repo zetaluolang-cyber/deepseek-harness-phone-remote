@@ -474,15 +474,24 @@ export function optionsFile() {
 /**
  * Read the operator options.
  * @param {string} [file] - options file path (defaults to optionsFile()).
- * @returns {{ pocketStrict: boolean }} - pocketStrict: when true, /pocket
- *   STATUS/TASKS also require a valid device credential (default: false).
+ * @returns {{ pocketStrict: boolean, push: { done: boolean, intervalSeconds: number } }}
+ *   - pocketStrict: when true, /pocket STATUS/TASKS also require a valid device
+ *     credential (default: false).
+ *   - push.done: when true, DONE transitions also produce a Web Push
+ *     notification (NEEDS_USER/FAILED always do; default: false).
+ *   - push.intervalSeconds: dispatcher poll interval (clamped 5..60, default 10).
  */
 export function readRemfsOptions(file = optionsFile()) {
   let obj = null
   try {
     obj = JSON.parse(readFileSync(file, 'utf8'))
   } catch {
-    return { pocketStrict: false }
+    return { pocketStrict: false, push: { done: false, intervalSeconds: 10 } }
   }
-  return { pocketStrict: !!(obj && obj.pocketStrict) }
+  const pushRaw = (obj && obj.push) || {}
+  const push = {
+    done: !!(pushRaw && pushRaw.done),
+    intervalSeconds: Number(pushRaw && pushRaw.intervalSeconds) > 0 ? Number(pushRaw.intervalSeconds) : 10,
+  }
+  return { pocketStrict: !!(obj && obj.pocketStrict), push }
 }

@@ -8,10 +8,14 @@
 // safe workspace-root resolution depends on them at apply time - relying on
 // accidental plugin ordering would make the fail-closed root resolution
 // nondeterministic.
-import { ensurePairingCode, rotatePairingCode, verifyDevice, readRemfsOptions } from './security.js'
+import { ensurePairingCode, rotatePairingCode, verifyDevice, readRemfsOptions, listDevices } from './security.js'
 import { createDispatcher } from './dispatch.js'
 import { createPresenceService } from './presence/service.js'
 import { PRESENCE_OPS } from './presence/contract.js'
+import { createPushStore, normalizeSubscription } from './push/store.js'
+import { createPushController } from './push/controller.js'
+import { createHttpHandlers } from './push/http.js'
+import { SERVICE_WORKER_SOURCE } from './push/sw.js'
 import { access, readdir, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -211,8 +215,88 @@ export default {
       switch (endpoint) {
         case PRESENCE_OPS.STATUS: return presence.status(authRes.device)
         case PRESENCE_OPS.TASKS: return presence.tasks()
+        case PRESENCE_OPS.PUSH_SUBSCRIBE: return pushSubscribe(authRes.device, payload)
+        case PRESENCE_OPS.PUSH_UNSUBSCRIBE: return pushUnsubscribe(authRes.device, payload)
         default: return pocketErr('bad-request', 'unknown /pocket endpoint: ' + String(endpoint))
       }
+    }
+
+    // ── Web Push (phone notifications with the page closed) ────────────────
+    // Subscriptions are tied to a PAIRED device (these RPC endpoints sit in the
+    // auth-required branch above). The push dispatcher polls presence.tasks()
+    // (the same single source of truth the Orb uses) and pushes NEEDS_USER /
+    // FAILED (always) and DONE (when remfs-options.json push.done is true).
+    // The VAPID keypair + subscriptions + dedupe map live in
+    // ~/.dsh/remfs-push.json (never in the repo).
+    const pushStore = createPushStore({})
+    const isDeviceValid = async (deviceId) => {
+      try {
+        return (await listDevices()).some((d) => String(d.id) === String(deviceId))
+      } catch { return false }
+    }
+    const pushSubscribe = async (device, payload) => {
+      const sub = normalizeSubscription(payload && payload.subscription)
+      if (!sub) return pocketErr('bad-request', 'push.subscribe: invalid subscription payload')
+      try {
+        await pushStore.addSubscription(device.id, sub, payload && payload.lang)
+        return { ok: true, value: { subscribed: true, endpoint: sub.endpoint } }
+      } catch (e) {
+        return pocketErr('store-write-failed', 'push.subscribe: ' + String((e && e.message) || e))
+      }
+    }
+    const pushUnsubscribe = async (device, payload) => {
+      try {
+        const endpoint = payload && payload.endpoint ? String(payload.endpoint) : null
+        const r = await pushStore.removeSubscription(device.id, endpoint)
+        return { ok: true, value: r }
+      } catch (e) {
+        return pocketErr('store-write-failed', 'push.unsubscribe: ' + String((e && e.message) || e))
+      }
+    }
+    const pushController = createPushController({
+      tasks: () => presence.tasks(),
+      store: pushStore,
+      isDeviceValid,
+      options: remfsOptions,
+      log: (m) => console.log('[remfs-persistent] push: ' + m),
+    })
+    ctx.effect(() => pushController.start(), 'remfs push dispatcher')
+
+    // ── HTTP surface on the harness webServer (same loopback origin) ───────
+    // /remfs-presence.json   → PC orb widget (and any local script) reads the
+    //                         same task DTOs the Orb renders; respects
+    //                         pocketStrict via device headers.
+    // /remfs-sw.js           → the Service Worker the phone registers (must be
+    //                         same-origin as the harness page).
+    // /remfs-push-vapid.json → the VAPID public key for pushManager.subscribe.
+    // The webServer service is resolved lazily (never in `inject`): if the
+    // composition lacks it, only these optional routes are skipped.
+    const webServer = ctx.get('webServer')
+    if (webServer && typeof webServer.register === 'function') {
+      const handlers = createHttpHandlers({
+        tasks: () => presence.tasks(),
+        verifyDevice,
+        pocketStrict: remfsOptions.pocketStrict,
+        vapidPublic: () => pushStore.vapidPublic(),
+        swSource: SERVICE_WORKER_SOURCE,
+      })
+      const routes = [
+        ['/remfs-presence.json', handlers.handlePresenceJson],
+        ['/remfs-sw.js', handlers.handleSw],
+        ['/remfs-push-vapid.json', handlers.handleVapidPublic],
+      ]
+      const disposers = []
+      for (const [p, h] of routes) {
+        try {
+          disposers.push(webServer.register({ kind: 'exact', path: p, handler: h }))
+          console.log('[remfs-persistent] route registered: ' + p)
+        } catch (e) {
+          console.log('[remfs-persistent] route skipped (' + p + '): ' + String((e && e.message) || e))
+        }
+      }
+      ctx.effect(() => () => { for (const d of disposers) { try { d() } catch { /* ignore */ } } }, 'remfs http routes')
+    } else {
+      console.log('[remfs-persistent] webServer unavailable — presence/push HTTP routes skipped')
     }
 
     conn.rpc.handle('/pocket', pocketHandler, { authority: 'trusted-host' })
@@ -251,6 +335,6 @@ export default {
       return () => { try { clearInterval(handle) } catch { /* ignore */ } }
     }, 'remfs pairing rotation watcher')
 
-    console.log('[remfs-persistent] host applied: /remfs + /pocket channels registered')
+    console.log('[remfs-persistent] host applied: /remfs + /pocket + push dispatcher registered')
   }
 }

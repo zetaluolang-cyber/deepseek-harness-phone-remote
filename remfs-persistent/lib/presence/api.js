@@ -27,6 +27,8 @@ export const API_ENGINE = 'presence-v1'
 export const API_OPS = Object.freeze({
   STATUS: 'presence.status',
   TASKS: 'presence.tasks',
+  PUSH_SUBSCRIBE: 'push.subscribe',
+  PUSH_UNSUBSCRIBE: 'push.unsubscribe',
 })
 
 /** Frozen error-code vocabulary. Every error a consumer can receive is here. */

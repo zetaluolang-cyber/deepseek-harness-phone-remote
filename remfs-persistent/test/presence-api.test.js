@@ -22,7 +22,12 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 test('presence api v1: version and engine are frozen', () => {
   assert.equal(API_VERSION, 'v1')
   assert.equal(API_ENGINE, 'presence-v1')
-  assert.deepEqual(API_OPS, { STATUS: 'presence.status', TASKS: 'presence.tasks' })
+  assert.deepEqual(API_OPS, {
+    STATUS: 'presence.status',
+    TASKS: 'presence.tasks',
+    PUSH_SUBSCRIBE: 'push.subscribe',
+    PUSH_UNSUBSCRIBE: 'push.unsubscribe',
+  })
   assert.deepEqual(Object.keys(API_OPS).sort(), Object.keys(PRESENCE_OPS).sort(),
     'api.js operations must mirror contract PRESENCE_OPS')
   for (const k of Object.keys(API_OPS)) {
