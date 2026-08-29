@@ -11,7 +11,7 @@
 import { ensurePairingCode, rotatePairingCode, verifyDevice, readRemfsOptions, listDevices } from './security.js'
 import { createDispatcher } from './dispatch.js'
 import { createPresenceService } from './presence/service.js'
-import { PRESENCE_OPS } from './presence/contract.js'
+import { createPocketHandler } from './presence/pocket.js'
 import { createPushStore, normalizeSubscription } from './push/store.js'
 import { createPushController } from './push/controller.js'
 import { createHttpHandlers } from './push/http.js'
@@ -188,38 +188,10 @@ export default {
     // (no file / false) keeps the read-only fence for the PC browser.
     const remfsOptions = readRemfsOptions()
 
-    const pocketHandler = async (endpoint, payload) => {
-      const authRes = await verifyDevice(
-        payload && payload.deviceId,
-        payload && payload.credential,
-      )
-      if (authRes.error === 'store-corrupt') {
-        return pocketErr('store-corrupt', 'security store corrupt — see ~/.dsh/remfs-security.json.corrupt-*')
-      }
-      // Read-only presence is allowed WITHOUT a device credential: the Orb /
-      // Board render inside the same browser-trust fence as the GUI itself,
-      // and the DTOs expose only what the GUI already shows (title / state /
-      // summary). Device credentials still gate /remfs and every other
-      // /pocket operation, and a verified device gets its capabilities back
-      // in presence.status. (Dogfood fix: the PC browser never pairs, so the
-      // Orb showed "Idle" forever.) With remfs-options.json pocketStrict=true
-      // this read-only fence is DISABLED and every /pocket call requires a
-      // valid device credential.
-      if (authRes.error) {
-        if (!remfsOptions.pocketStrict) {
-          if (endpoint === PRESENCE_OPS.STATUS) return presence.status(null)
-          if (endpoint === PRESENCE_OPS.TASKS) return presence.tasks()
-        }
-        return pocketErr('auth-invalid', 'device authentication failed — re-pair the device')
-      }
-      switch (endpoint) {
-        case PRESENCE_OPS.STATUS: return presence.status(authRes.device)
-        case PRESENCE_OPS.TASKS: return presence.tasks()
-        case PRESENCE_OPS.PUSH_SUBSCRIBE: return pushSubscribe(authRes.device, payload)
-        case PRESENCE_OPS.PUSH_UNSUBSCRIBE: return pushUnsubscribe(authRes.device, payload)
-        default: return pocketErr('bad-request', 'unknown /pocket endpoint: ' + String(endpoint))
-      }
-    }
+    // The /pocket dispatcher itself lives in presence/pocket.js so its
+    // authorization rules (read-only fence, pocketStrict, the files gate on
+    // push ops) are unit-tested; it is created below once the push closures
+    // exist.
 
     // ── Web Push (phone notifications with the page closed) ────────────────
     // Subscriptions are tied to a PAIRED device (these RPC endpoints sit in the
@@ -253,6 +225,14 @@ export default {
         return pocketErr('store-write-failed', 'push.unsubscribe: ' + String((e && e.message) || e))
       }
     }
+    const pocketHandler = createPocketHandler({
+      presence,
+      verifyDevice,
+      pocketStrict: remfsOptions.pocketStrict,
+      pushSubscribe,
+      pushUnsubscribe,
+    })
+
     const pushController = createPushController({
       tasks: () => presence.tasks(),
       store: pushStore,

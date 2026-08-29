@@ -16,6 +16,7 @@ import { ensurePairingCode, pairDevice } from '../lib/security.js'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const CLIENT_SRC = readFileSync(path.join(HERE, '..', 'lib', 'client.js'), 'utf8')
 const HOST_SRC = readFileSync(path.join(HERE, '..', 'lib', 'host.js'), 'utf8')
+const POCKET_SRC = readFileSync(path.join(HERE, '..', 'lib', 'presence', 'pocket.js'), 'utf8')
 
 test('host source: no whole-drive (C:\\) fallback for the workspace root', () => {
   assert.doesNotMatch(HOST_SRC, /return 'C:\\\\'|workspaceRoot.*C:\\\\/,
@@ -78,39 +79,24 @@ test('client source: upstream CSS-module selectors are isolated in one adapter',
 // /remfs), authenticates every call with the device credential, and
 // implements ONLY the frozen presence operations (docs/presence-api-v1.md).
 // The former Pocket Cockpit and its capability gate were removed.
-test('host source: registers /pocket with device-auth, presence ops only', () => {
+test('host source: registers /pocket wired to the extracted dispatcher', () => {
   assert.match(HOST_SRC, /rpc\.handle\('\/pocket'/, 'host must register the /pocket channel')
-  assert.match(HOST_SRC, /verifyDevice\(/, 'host must authenticate /pocket calls with the device credential')
-  assert.match(HOST_SRC, /PRESENCE_OPS\.STATUS/, 'host must implement presence.status')
-  assert.match(HOST_SRC, /PRESENCE_OPS\.TASKS/, 'host must implement presence.tasks')
-  assert.match(HOST_SRC, /bad-request/, 'unknown endpoints must fail with bad-request')
-  // cockpit is gone: no POCKET_OPS, no cockpit capability gate, no away ops
-  assert.doesNotMatch(HOST_SRC, /POCKET_OPS/, 'cockpit operations must be removed')
-  assert.doesNotMatch(HOST_SRC, /cockpit\.sessions|cockpit\.away|cockpit\.check/, 'cockpit ops must be removed')
-})
-
-test('host source: read-only presence works WITHOUT a device credential (PC browser)', () => {
-  // Dogfood fix: the PC browser never pairs, so the Orb stayed "Idle" — the
-  // Orb/Board render inside the GUI's own browser-trust fence and the DTOs
-  // expose only what the GUI already shows. Auth errors fall through to the
-  // read-only presence ops; everything else still fails closed. The
-  // read-only fence can be disabled by ~/.dsh/remfs-options.json
-  // (pocketStrict:true), which makes EVERY /pocket call require a credential.
-  const gate = HOST_SRC.slice(HOST_SRC.indexOf('const pocketHandler'))
-  assert.match(gate, /authRes\.error\)\s*\{[\s\S]*?PRESENCE_OPS\.STATUS/,
-    'unauthorized requests must still serve presence.status (default)')
-  assert.match(gate, /authRes\.error\)\s*\{[\s\S]*?PRESENCE_OPS\.TASKS/,
-    'unauthorized requests must still serve presence.tasks (default)')
-  assert.match(gate, /auth-invalid/, 'non-presence unauthorized requests still fail closed')
-})
-
-test('host source: pocketStrict option (remfs-options.json) gates the read-only presence ops', () => {
+  assert.match(HOST_SRC, /createPocketHandler\(\{/, 'host must wire the unit-tested pocket dispatcher')
+  assert.match(HOST_SRC, /pocketStrict: remfsOptions\.pocketStrict/, 'host must pass the operator switch through')
   assert.match(HOST_SRC, /readRemfsOptions\(\)/, 'host must read the operator options once at apply')
-  assert.match(HOST_SRC, /pocketStrict/, 'host must honor the pocketStrict switch')
-  const gate = HOST_SRC.slice(HOST_SRC.indexOf('const pocketHandler'))
-  assert.match(gate, /!remfsOptions\.pocketStrict/, 'read-only fallback must be conditional on !pocketStrict')
-  assert.match(gate, /remfsOptions\.pocketStrict[\s\S]*?auth-invalid/,
-    'strict mode must fall through to auth-invalid when no credential is present')
+  // The dispatcher itself: authenticates, implements the presence ops, fails
+  // closed on unknown endpoints, and gates push ops on the files capability.
+  // (Behaviour is pinned in test/pocket.test.js; this is the wiring contract.)
+  assert.match(POCKET_SRC, /verifyDevice\(/, 'dispatcher must authenticate with the device credential')
+  assert.match(POCKET_SRC, /PRESENCE_OPS\.STATUS/, 'dispatcher must implement presence.status')
+  assert.match(POCKET_SRC, /PRESENCE_OPS\.TASKS/, 'dispatcher must implement presence.tasks')
+  assert.match(POCKET_SRC, /deviceHasCapability\(authRes\.device, 'files'\)/, 'push ops must be capability-gated')
+  assert.match(POCKET_SRC, /bad-request/, 'unknown endpoints must fail with bad-request')
+  // cockpit is gone: no POCKET_OPS, no cockpit capability gate, no away ops
+  for (const src of [HOST_SRC, POCKET_SRC]) {
+    assert.doesNotMatch(src, /POCKET_OPS/, 'cockpit operations must be removed')
+    assert.doesNotMatch(src, /cockpit\.sessions|cockpit\.away|cockpit\.check/, 'cockpit ops must be removed')
+  }
 })
 
 test('client source: presence handoff opens the EXISTING session (no replacement)', () => {

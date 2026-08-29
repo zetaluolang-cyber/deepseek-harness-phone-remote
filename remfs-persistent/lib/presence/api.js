@@ -35,7 +35,7 @@ export const API_OPS = Object.freeze({
 export const ERROR_CODES = Object.freeze({
   AUTH_INVALID: 'auth-invalid',             // device credential rejected
   STORE_CORRUPT: 'store-corrupt',           // security store unreadable
-  CAPABILITY_DENIED: 'capability-denied',   // frozen legacy code (cockpit gate removed; kept for v1 compat, never emitted)
+  CAPABILITY_DENIED: 'capability-denied',   // device lacks the capability for this op (push ops require `files`)
   BAD_REQUEST: 'bad-request',               // unknown operation
   CAPABILITY_UNAVAILABLE: 'capability-unavailable', // sessionQuery missing (presence disabled)
   SESSIONS_UNAVAILABLE: 'sessions-unavailable',     // session query failed
