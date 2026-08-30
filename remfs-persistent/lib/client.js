@@ -131,6 +131,14 @@ window.__ModuleLoader__.load({
 .remfs-manager textarea{width:100%;box-sizing:border-box;min-height:110px;font-family:monospace;font-size:12px;background:rgba(0,0,0,.2);color:inherit;border:1px solid rgba(128,128,128,.3);border-radius:6px;padding:8px}
 .remfs-wssec{padding:8px 12px 4px;display:flex;flex-direction:column;gap:6px}
 .remfs-wssec .lbl{font-size:11px;color:var(--dsw-alias-label-secondary,#999)}
+.remfs-pushbox{margin:8px 12px 0;padding:10px 12px;border:1px solid rgba(128,128,128,.28);border-radius:10px;background:rgba(30,30,36,.6);display:flex;flex-direction:column;gap:8px}
+.remfs-pushrow{display:flex;align-items:center;gap:10px}
+.remfs-pushicon{font-size:18px}
+.remfs-pushinfo{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.remfs-pushtitle{font-size:13px;font-weight:600}
+.remfs-pushhint{font-size:11px;color:var(--dsw-alias-label-secondary,#999)}
+.remfs-pushask{display:flex;flex-direction:column;gap:8px}
+.remfs-pushask .remfs-tools,.remfs-pushrow .remfs-tools{display:flex;gap:8px;flex-wrap:wrap}
 .remfs-wschips{display:flex;flex-wrap:wrap;gap:6px}
 .remfs-wschip{border:1px solid rgba(74,108,247,.55);border-radius:8px;padding:5px 10px;cursor:pointer;font-size:12px;background:rgba(74,108,247,.12);color:inherit;display:flex;flex-direction:column;gap:1px;align-items:flex-start;max-width:200px}
 .remfs-wschip:hover{background:rgba(74,108,247,.2)}
@@ -237,6 +245,7 @@ window.__ModuleLoader__.load({
         devicesTitle: '已配对设备', revokeBtn: '吊销', revokeAllBtn: '吊销全部',
         revokedToast: '✅ 已吊销', noDevices: '暂无设备', devMgmt: '🔐 设备管理',
         pushToggle: '推送通知(关页面也能收到「需要你」)', pushUnsupported: '需 HTTPS(localhost 或 Tailscale HTTPS)', pushEnableErr: '推送不可用,请确认已连接 Tailscale HTTPS',
+        pushHint: '关页面也能收到「需要你 / 失败」提醒', pushAskTitle: '开启推送通知?', pushAskHint: '关闭页面也能收到重要提醒', pushAskYes: '开启', pushAskLater: '稍后', pushOn: '已开启', pushOff: '开启',
         pushTestBtn: '测试推送', pushTestOk: '✅ 已发送 — 请留意手机通知;收不到多为推送服务(如 FCM)不可达', pushTestFail: '❌ 推送发送失败', pushTestNone: '请先开启推送开关',
         rootOutside: '新增目录必须在已批准目录内——在电脑上编辑 .remfs-roots.json 添加新位置',
         authFailed: '设备未授权,请重新配对', capDenied: '此设备没有执行该操作所需的权限',
@@ -279,6 +288,7 @@ window.__ModuleLoader__.load({
         devicesTitle: 'Paired devices', revokeBtn: 'Revoke', revokeAllBtn: 'Revoke all',
         revokedToast: '✅ Revoked', noDevices: 'No devices', devMgmt: '🔐 Devices',
         pushToggle: 'Push notifications (get "needs you" with the page closed)', pushUnsupported: 'needs HTTPS (localhost or Tailscale HTTPS)', pushEnableErr: 'Push unavailable — check you are on Tailscale HTTPS',
+        pushHint: 'Get "needs you / failed" alerts with the page closed', pushAskTitle: 'Enable push notifications?', pushAskHint: 'Important alerts arrive even with the page closed', pushAskYes: 'Enable', pushAskLater: 'Later', pushOn: 'On', pushOff: 'Enable',
         pushTestBtn: 'Test push', pushTestOk: '✅ Sent — watch for the notification; if none arrives the push service (e.g. FCM) is unreachable', pushTestFail: '❌ Test push failed', pushTestNone: 'Enable the push toggle first',
         rootOutside: 'New roots must stay inside approved roots — edit .remfs-roots.json on the PC to add new locations',
         authFailed: 'Device not authorized — please pair again', capDenied: 'This device does not have permission for that operation',
@@ -622,6 +632,9 @@ window.__ModuleLoader__.load({
       const [devices, setDevices] = React.useState([])
       const [pushReg, setPushReg] = React.useState(null)
       const [pushOk, setPushOk] = React.useState(pushSupported())
+      const [pushAsk, setPushAsk] = React.useState(false)
+      const pushDeclined = () => { try { return window.localStorage.getItem('remfs-push-declined') === '1' } catch { return false } }
+      const declinePush = () => { try { window.localStorage.setItem('remfs-push-declined', '1') } catch { /* ignore */ } }
       React.useEffect(() => {
         // The service worker registration resolves asynchronously in apply();
         // grab it when it appears so the toggle can subscribe with it.
@@ -664,6 +677,9 @@ window.__ModuleLoader__.load({
             refresh(null)
             // If push is opted in, subscribe with the freshly paired identity.
             if (pushEnabled() && window.__remfsPushReg) ensurePushSubscription(conn, window.__remfsPushReg)
+            // Freshly paired + HTTPS + not previously declined: nudge toward
+            // push right on the home screen (the toggle lives there now).
+            if (pushOk && !pushEnabled() && !pushDeclined()) setPushAsk(true)
           } else {
             const fe = friendlyErr((r && r.error && r.error.message) || t('pairFailed'), r && r.error && r.error.code)
             setError(fe)
@@ -993,6 +1009,38 @@ window.__ModuleLoader__.load({
       const errLine = error ? React.createElement('div', { className: 'remfs-err' + (error.lock ? ' lock' : '') }, error.text) : null
 
       const sessionBody = React.createElement(React.Fragment, null,
+        // Push notifications, front and center: a post-pairing prompt card and
+        // an always-visible toggle + test button on the home tab (no longer
+        // buried in Files → ⋯ → Devices).
+        (pushOk ? React.createElement('div', { className: 'remfs-pushbox' },
+          pushAsk ? React.createElement('div', { className: 'remfs-pushask' },
+            React.createElement('div', { className: 'remfs-pushtitle' }, '🔔 ' + t('pushAskTitle')),
+            React.createElement('div', { className: 'remfs-pushhint' }, t('pushAskHint')),
+            React.createElement('div', { className: 'remfs-tools' },
+              React.createElement('button', { className: 'remfs-btn primary', onClick: () => { setPushAsk(false); onTogglePush(true) } }, t('pushAskYes')),
+              React.createElement('button', { className: 'remfs-btn', onClick: () => { setPushAsk(false); declinePush() } }, t('pushAskLater'))
+            )
+          ) : React.createElement('div', { className: 'remfs-pushrow' },
+            React.createElement('span', { className: 'remfs-pushicon' }, '🔔'),
+            React.createElement('div', { className: 'remfs-pushinfo' },
+              React.createElement('div', { className: 'remfs-pushtitle' }, t('pushToggle')),
+              React.createElement('div', { className: 'remfs-pushhint' }, t('pushHint'))
+            ),
+            React.createElement('div', { className: 'remfs-tools' },
+              pushEnabled()
+                ? React.createElement('button', { className: 'remfs-btn primary', onClick: () => onTogglePush(false) }, '✓ ' + t('pushOn'))
+                : React.createElement('button', { className: 'remfs-btn', onClick: () => onTogglePush(true) }, t('pushOff')),
+              pushEnabled() ? React.createElement('button', { className: 'remfs-btn', onClick: () => {
+                pocketRpc(conn, 'push.test', {}).then((r) => {
+                  if (r && r.ok && r.value && r.value.sent > 0) showToast(t('pushTestOk'), 'success')
+                  else if (r && !r.ok && r.error && r.error.code === 'capability-denied') showToast(t('capDenied'), 'error')
+                  else if (r && !r.ok && r.error && /no subscription/i.test(r.error.message || '')) showToast(t('pushTestNone'), 'error')
+                  else showToast(t('pushTestFail'), 'error')
+                }).catch(() => showToast(t('pushTestFail'), 'error'))
+              } }, t('pushTestBtn')) : null
+            )
+          )
+        ) : null),
         React.createElement('div', { className: 'remfs-wssec' },
           React.createElement('span', { className: 'lbl' }, t('wsSection')),
           React.createElement('div', { className: 'remfs-wschips' },
