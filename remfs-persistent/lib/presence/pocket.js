@@ -56,16 +56,21 @@ export function createPocketHandler(deps) {
     switch (endpoint) {
       case PRESENCE_OPS.STATUS: return presence.status(authRes.device)
       case PRESENCE_OPS.TASKS: return presence.tasks()
-      case PRESENCE_OPS.PUSH_SUBSCRIBE:
-      case PRESENCE_OPS.PUSH_UNSUBSCRIBE: {
+      case PRESENCE_OPS.PUSH_SUBSCRIBE: {
         if (!deviceHasCapability(authRes.device, 'files')) {
           return pocketErr('capability-denied',
             'push requires the files capability (pushes carry task titles/summaries)')
         }
-        return endpoint === PRESENCE_OPS.PUSH_SUBSCRIBE
-          ? pushSubscribe(authRes.device, payload)
-          : pushUnsubscribe(authRes.device, payload)
+        return pushSubscribe(authRes.device, payload)
       }
+      // Unsubscribe is deliberately NOT capability-gated: removing your own
+      // subscription only reduces data flow, so it is never a privilege — and
+      // a narrowed device must be able to clean up after itself. (The push
+      // dispatcher's isDeviceValid prune also drops narrowed devices'
+      // subscriptions within a minute, so a device that cannot call this
+      // still stops receiving pushes.)
+      case PRESENCE_OPS.PUSH_UNSUBSCRIBE:
+        return pushUnsubscribe(authRes.device, payload)
       default: return pocketErr('bad-request', 'unknown /pocket endpoint: ' + String(endpoint))
     }
   }
