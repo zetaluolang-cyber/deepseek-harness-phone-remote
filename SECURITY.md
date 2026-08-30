@@ -24,10 +24,13 @@ reasonably quickly. If you can, avoid automated scans against running instances.
   pairing is one-time and time-limited.
 - **Over-broad paired-device authority** — `/remfs` enforces `files` on
   filesystem/workspace operations and `device-admin` on device management;
-  `/pocket` push subscribe/unsubscribe also require `files` (push payloads
-  carry task titles/summaries — content strictly weaker than what `files`
-  already grants). New devices receive both capabilities for
-  backward-compatible behavior; remote clients cannot grant capabilities. To narrow a device, edit its entry in
+  `/pocket` push **subscribe** also requires `files` (push payloads carry task
+  titles/summaries — content strictly weaker than what `files` already
+  grants); unsubscribe is never gated, since removing your own subscription
+  only reduces data flow. Narrowing a device away from `files` also prunes
+  its EXISTING push subscriptions within a minute (same guarantee as
+  revocation). New devices receive both capabilities for backward-compatible
+  behavior; remote clients cannot grant capabilities. To narrow a device, edit its entry in
   `%USERPROFILE%\.dsh\remfs-security.json` **while the harness is stopped**
   (the host process is the single writer) and remove capabilities from its
   list, e.g. a browse-only device:

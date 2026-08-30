@@ -33,18 +33,24 @@ test('pocket: files-capable device may subscribe and unsubscribe', async () => {
   assert.equal(calls.unsubscribe, 1)
 })
 
-test('pocket: device narrowed away from files is denied push, with the FROZEN code', async () => {
+test('pocket: device narrowed away from files is denied SUBSCRIBE, with the FROZEN code', async () => {
   const { handler, calls } = makeHandler({
     verifyDevice: async () => ({ ok: true, device: { id: 'd2', capabilities: ['device-admin'] } }),
   })
-  for (const op of ['push.subscribe', 'push.unsubscribe']) {
-    const r = await handler(op, { deviceId: 'd2', credential: 'c' })
-    assert.equal(r.ok, false)
-    assert.equal(r.error.code, 'capability-denied')
-    assert.ok(Object.values(ERROR_CODES).includes(r.error.code), 'code must be in the frozen v1 vocabulary')
-  }
+  const r = await handler('push.subscribe', { deviceId: 'd2', credential: 'c' })
+  assert.equal(r.ok, false)
+  assert.equal(r.error.code, 'capability-denied')
+  assert.ok(Object.values(ERROR_CODES).includes(r.error.code), 'code must be in the frozen v1 vocabulary')
   assert.equal(calls.subscribe, 0, 'the subscribe closure must never run for a denied device')
-  assert.equal(calls.unsubscribe, 0)
+})
+
+test('pocket: unsubscribe is NOT capability-gated - a narrowed device may always clean up', async () => {
+  const { handler, calls } = makeHandler({
+    verifyDevice: async () => ({ ok: true, device: { id: 'd2', capabilities: [] } }),
+  })
+  const r = await handler('push.unsubscribe', { deviceId: 'd2', credential: 'c' })
+  assert.equal(r.ok, true, 'removing your own subscription is never a privilege')
+  assert.equal(calls.unsubscribe, 1)
 })
 
 test('pocket: capability gate does not touch STATUS/TASKS for a verified device', async () => {
