@@ -105,7 +105,10 @@ function Test-RemfsPluginReady {
 # Creates missing target subdirectories.
 function Sync-RemfsPlugin {
     param([string]$Vendor, [string]$NmPkg)
-    if (-not (Test-RemfsPluginReady -Vendor $Vendor -NmPkg $NmPkg)) { return $false }
+    # A clean install has no node_modules target yet. Only the vendor source is
+    # required up front; this function owns creating the destination.
+    if (-not $Vendor -or -not (Test-Path (Join-Path $Vendor "package.json")) -or
+        -not (Test-Path (Join-Path $Vendor "lib")) -or -not $NmPkg) { return $false }
     New-Item -ItemType Directory -Force -Path $NmPkg | Out-Null
     # package.json
     Copy-Item (Join-Path $Vendor "package.json") (Join-Path $NmPkg "package.json") -Force -ErrorAction SilentlyContinue

@@ -10,7 +10,7 @@ import { ERROR_CODES } from '../lib/presence/api.js'
 const okEnv = (value) => ({ ok: true, value })
 
 function makeHandler(over = {}) {
-  const calls = { subscribe: 0, unsubscribe: 0 }
+  const calls = { subscribe: 0, unsubscribe: 0, test: 0 }
   const handler = createPocketHandler({
     presence: {
       status: (device) => okEnv({ who: device ? device.id : null }),
@@ -20,6 +20,7 @@ function makeHandler(over = {}) {
     pocketStrict: over.pocketStrict || false,
     pushSubscribe: async () => { calls.subscribe++; return okEnv({ subscribed: true }) },
     pushUnsubscribe: async () => { calls.unsubscribe++; return okEnv({ removed: 1 }) },
+    pushTest: async () => { calls.test++; return okEnv({ sent: 1, results: [] }) },
     ...over.deps,
   })
   return { handler, calls }
@@ -42,6 +43,21 @@ test('pocket: device narrowed away from files is denied SUBSCRIBE, with the FROZ
   assert.equal(r.error.code, 'capability-denied')
   assert.ok(Object.values(ERROR_CODES).includes(r.error.code), 'code must be in the frozen v1 vocabulary')
   assert.equal(calls.subscribe, 0, 'the subscribe closure must never run for a denied device')
+})
+
+test('pocket: push.test is files-gated like subscribe (content probe parity)', async () => {
+  const ok = makeHandler()
+  assert.equal((await ok.handler('push.test', { deviceId: 'd1', credential: 'c' })).ok, true)
+  assert.equal(ok.calls.test, 1)
+  const narrowed = makeHandler({
+    verifyDevice: async () => ({ ok: true, device: { id: 'd2', capabilities: ['device-admin'] } }),
+  })
+  const r = await narrowed.handler('push.test', { deviceId: 'd2', credential: 'c' })
+  assert.equal(r.error.code, 'capability-denied')
+  assert.equal(narrowed.calls.test, 0)
+  // never inside the unauthenticated fence
+  const noAuth = makeHandler({ verifyDevice: async () => ({ error: 'auth-invalid' }) })
+  assert.equal((await noAuth.handler('push.test', {})).error.code, 'auth-invalid')
 })
 
 test('pocket: unsubscribe is NOT capability-gated - a narrowed device may always clean up', async () => {

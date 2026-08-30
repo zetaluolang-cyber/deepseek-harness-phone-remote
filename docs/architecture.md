@@ -49,7 +49,7 @@ DeepSeek Harness Web (binds 127.0.0.1)
 - Loaded on every page via the `dsh.client` module table (persistent — no
   per-session run). Module id = package name.
 - Workbench UI: New Session / Files tabs, breadcrumbs, preview/edit/upload/
-  download, workspace badges, floating ball, bilingual (EN/zh).
+  download, workspace badges, Task Board header action, bilingual (EN/zh).
 - Device auth: credential stored in `localStorage`; an unpaired device sees the
   pairing screen; `auth-invalid` responses drop the credential and re-show it.
 - All RPC payloads carry `{ deviceId, credential }` (except `pair`).

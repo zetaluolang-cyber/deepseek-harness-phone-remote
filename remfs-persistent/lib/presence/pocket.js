@@ -30,10 +30,11 @@ const pocketErr = (code, message) => ({ ok: false, error: { code, message, detai
  *   pocketStrict:    boolean,
  *   pushSubscribe:   (device, payload) => Promise<envelope>,
  *   pushUnsubscribe: (device, payload) => Promise<envelope>,
+ *   pushTest:        (device, payload) => Promise<envelope>,
  * }
  */
 export function createPocketHandler(deps) {
-  const { presence, verifyDevice, pocketStrict, pushSubscribe, pushUnsubscribe } = deps
+  const { presence, verifyDevice, pocketStrict, pushSubscribe, pushUnsubscribe, pushTest } = deps
   return async function pocketHandler(endpoint, payload) {
     const authRes = await verifyDevice(
       payload && payload.deviceId,
@@ -56,12 +57,15 @@ export function createPocketHandler(deps) {
     switch (endpoint) {
       case PRESENCE_OPS.STATUS: return presence.status(authRes.device)
       case PRESENCE_OPS.TASKS: return presence.tasks()
-      case PRESENCE_OPS.PUSH_SUBSCRIBE: {
+      case PRESENCE_OPS.PUSH_SUBSCRIBE:
+      case PRESENCE_OPS.PUSH_TEST: {
         if (!deviceHasCapability(authRes.device, 'files')) {
           return pocketErr('capability-denied',
             'push requires the files capability (pushes carry task titles/summaries)')
         }
-        return pushSubscribe(authRes.device, payload)
+        return endpoint === PRESENCE_OPS.PUSH_SUBSCRIBE
+          ? pushSubscribe(authRes.device, payload)
+          : pushTest(authRes.device, payload)
       }
       // Unsubscribe is deliberately NOT capability-gated: removing your own
       // subscription only reduces data flow, so it is never a privilege — and

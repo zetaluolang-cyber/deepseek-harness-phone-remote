@@ -102,6 +102,10 @@ export const PRESENCE_OPS = Object.freeze({
   TASKS: 'presence.tasks',
   PUSH_SUBSCRIBE: 'push.subscribe',
   PUSH_UNSUBSCRIBE: 'push.unsubscribe',
+  // Added 2026-08 (adding operations is allowed within the v1 freeze): sends
+  // an immediate test notification to the CALLER's subscriptions, so a dead
+  // push channel is discovered at setup time, not when an agent fails.
+  PUSH_TEST: 'push.test',
 })
 
 /**

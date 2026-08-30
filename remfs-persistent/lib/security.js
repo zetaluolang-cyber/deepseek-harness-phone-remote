@@ -29,6 +29,7 @@ export const DEFAULT_DEVICE_CAPABILITIES = Object.freeze(['files', 'device-admin
 
 export const PAIRING_TTL_MS = 10 * 60 * 1000 // pairing code validity
 export const CREDENTIAL_BYTES = 32 // long-term device credential (256-bit)
+export const COMPANION_TOKEN_BYTES = 32 // local read-only desktop presence token
 // `lastSeen` is a UI convenience field, not a security control. Persisting it
 // on EVERY verifyDevice() meant a full store rewrite (stringify + tmp write +
 // rename) per RPC — and presence polls every 8s, the push dispatcher every
@@ -60,7 +61,7 @@ export const HARD_DENY_SEGMENTS = new Set(['windows', 'system32', 'syswow64'])
 // HARD-DENY file patterns: credentials, private keys and system files. These
 // are NEVER reachable even when the parent protected directory (e.g. .ssh,
 // .aws) is registered as a workspace.
-export const DENY_FILE = /(^|[/\\])\.ssh([/\\]|$)|(^|[/\\])\.git([/\\]|$)|(^|[/\\])\.aws([/\\]|$)|(^|[/\\])\.gnupg([/\\]|$)|(^|[/\\])\.config[/\\]gcloud([/\\]|$)|(^|[/\\])\.env(\.[a-z0-9_-]+)?$|(^|[/\\])id_(rsa|ed25519|dsa|ecdsa)(\.pub)?$|\.(pem|key|pfx|p12)$|(^|[/\\])\.credentials\.ya?ml$|(^|[/\\])ntuser\.dat$|^[A-Za-z]:[/\\](sam|system|security)(\.|$)/i
+export const DENY_FILE = /(^|[/\\])\.ssh([/\\]|$)|(^|[/\\])\.git([/\\]|$)|(^|[/\\])\.aws([/\\]|$)|(^|[/\\])\.gnupg([/\\]|$)|(^|[/\\])\.config[/\\]gcloud([/\\]|$)|(^|[/\\])\.env(\.[a-z0-9_-]+)?$|(^|[/\\])id_(rsa|ed25519|dsa|ecdsa)(\.pub)?$|\.(pem|key|pfx|p12)$|(^|[/\\])\.credentials\.ya?ml$|(^|[/\\])remfs-companion-token$|(^|[/\\])ntuser\.dat$|^[A-Za-z]:[/\\](sam|system|security)(\.|$)/i
 
 export const ERR = {
   AUTH_REQUIRED: 'auth-required',
@@ -245,6 +246,30 @@ export const securityFile = () => path.join(os.homedir(), '.dsh', 'remfs-securit
 
 export const pairingTxtFile = (file = securityFile()) =>
   path.join(path.dirname(file), 'remfs-pairing.txt')
+
+export const companionTokenFile = (file = securityFile()) =>
+  path.join(path.dirname(file), 'remfs-companion-token')
+
+/**
+ * Return the stable 256-bit token used only by the local desktop companion's
+ * read-only HTTP presence request. It is intentionally separate from paired
+ * device credentials and is hard-denied by the remote filesystem boundary.
+ */
+export async function ensureCompanionToken(file = companionTokenFile()) {
+  try {
+    const existing = String(await readFile(file, 'utf8')).trim().toLowerCase()
+    if (/^[a-f0-9]{64}$/.test(existing)) return existing
+  } catch (e) {
+    if (!e || e.code !== 'ENOENT') {
+      // Invalid/unreadable local token is replaced below; it grants only the
+      // read-only presence route and is never a source of user data.
+    }
+  }
+  const token = randomToken(COMPANION_TOKEN_BYTES)
+  await mkdir(path.dirname(file), { recursive: true })
+  await writeFile(file, token + '\n', { encoding: 'utf8', mode: 0o600 })
+  return token
+}
 
 // ------------------------------------------------------------------ store
 

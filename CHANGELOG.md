@@ -4,6 +4,50 @@ All notable changes to `@zetaluolang/remfs-persistent` and the deploy package.
 
 ## Unreleased
 
+- **Push dispatcher actually delivers (P0 fix)** — the dispatcher called
+  `sendPush` with positional arguments while it takes one options object, so
+  every real dispatch threw inside the cycle-level catch: **no push had ever
+  been delivered by the periodic dispatcher**. The call is fixed and the
+  calling convention is pinned by new dispatcher tests that drive `tick()`
+  through the real `sendPush` (fetch faked): delivery, per-session dedupe, and
+  gone-endpoint pruning.
+- **Test push (`push.test`)** — a Devices-pane button sends an immediate test
+  notification to the calling device and reports per-endpoint results, so a
+  dead push channel (e.g. FCM unreachable from mainland networks) is
+  discovered at setup time instead of when an agent fails. `files`-gated like
+  subscribe; new frozen-vocabulary-compatible operation (additions allowed).
+- **Browser notifications restored** — NEEDS_USER/FAILED notifications were
+  deleted together with the in-page Orb; they are event delivery, not a
+  visual, and now run as a headless presence poll independent of any UI.
+  The Task Board error line also surfaces the host error code again.
+- **PC toast notifications** — the desktop companion fires a native Windows
+  toast on transitions into NEEDS_USER/FAILED (survives fullscreen windows,
+  lands in Action Center, respects Focus Assist; zero dependencies).
+- **Narrowing stops pushes** — `isDeviceValid` for the dispatcher now also
+  requires the `files` capability, so narrowing a device prunes its existing
+  subscriptions within a minute (same guarantee as revocation), and
+  unsubscribe is deliberately not capability-gated (cleanup is never a
+  privilege).
+- **Docs: honest delivery notes** — presence-push.md now states the
+  mainland-China FCM reachability reality and the Tailscale exit-node
+  workaround, next to the existing iOS add-to-home-screen requirement.
+- **One desktop companion, no duplicate web Orb** — the in-page floating ball
+  is removed; the Task Board remains available as a compact header action. The
+  Windows companion is now a true per-pixel-alpha orb with no backing card or
+  transparency key. Hover reveals status and task title; click opens a task
+  quick panel. Native compositor dragging removes repaint flicker, while
+  state-aware orbital sparks, trails, bursts and energy rings provide motion
+  without keeping quiet states busy. It also uses an atomic named mutex,
+  surfaces malformed/host-error presence responses as disconnected instead of
+  false Idle, supports cross-monitor dragging, and has a rendered WinForms
+  smoke test in Windows CI.
+- **Real clean-user one-click deployment** — the Windows installer now owns a
+  private DSH runtime under `~/.dsh/runtime`, creates a missing web profile,
+  deploys the complete plugin, writes the launcher before its shortcut, starts
+  the stack and verifies both Harness and the plugin route before printing
+  `DONE`. Tailscale uses its real device-login flow. CI executes the production
+  installer twice against an isolated empty `USERPROFILE` and offline DSH npm
+  fixture, proving fresh install and idempotent repair without system changes.
 - **/pocket capability gate** — `push.subscribe`/`push.unsubscribe` now
   require the `files` capability (pushes carry task titles/summaries); denial
   uses the frozen `capability-denied` code. The /pocket dispatcher moved to

@@ -121,39 +121,6 @@ window.__ModuleLoader__.load({
 .remfs-card .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .remfs-open{background:transparent;border:1px solid rgba(74,108,247,.6);color:#7d97ff;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;flex:none}
 .remfs-open:hover{background:rgba(74,108,247,.15)}
-/* Agent Presence floating ball (design §10-11): fixed over the page,
-   draggable. Bright brand-whale badge + state ring + corner state badge +
-   text tag — never color-only. */
-/* Agent Presence floating ball (design §10-11): fixed over the page,
-   draggable. Bright brand-whale badge + state ring + corner state badge +
-   text tag — never color-only. Animations: state-colored breathing glow,
-   dashed spin ring while RUNNING, bobbing whale, popping badge, fade-up
-   peek. All pure CSS; prefers-reduced-motion disables them. */
-.remfs-orbwrap{position:fixed;right:16px;bottom:16px;z-index:1500;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:grab;touch-action:none;-webkit-user-select:none;user-select:none}
-.remfs-orbwrap.drag{cursor:grabbing}
-.remfs-orbwrap.quiet{opacity:.72}
-.remfs-orbwrap.quiet .remfs-orb-logo{animation:none}
-.remfs-orb{width:46px;height:46px;border-radius:50%;border:2px solid rgba(128,128,128,.5);background:linear-gradient(145deg,#7b96ff 0%,#4a6cf7 50%,#2c4bd6 100%);color:#fff;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;box-shadow:0 0 12px var(--orb-glow,rgba(74,108,247,.55)),0 6px 20px rgba(47,79,216,.45);transition:transform .12s, box-shadow .3s;position:relative}
-.remfs-orb:hover{transform:scale(1.06)}
-.remfs-orb.alert{animation:remfs-glow 1.6s ease-in-out infinite}
-.remfs-orb.running::before{content:'';position:absolute;inset:-6px;border-radius:50%;border:2px dashed var(--orb-glow,#4a6cf7);opacity:.65;animation:remfs-spin 7s linear infinite;pointer-events:none}
-@keyframes remfs-glow{0%,100%{box-shadow:0 0 8px var(--orb-glow,rgba(74,108,247,.45)),0 6px 20px rgba(47,79,216,.45)}50%{box-shadow:0 0 18px var(--orb-glow,rgba(74,108,247,.85)),0 6px 20px rgba(47,79,216,.5)}}
-@keyframes remfs-spin{to{transform:rotate(360deg)}}
-@keyframes remfs-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.5px)}}
-@keyframes remfs-pop{from{transform:scale(.3)}to{transform:scale(1)}}
-@keyframes remfs-fade-up{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-@media (prefers-reduced-motion: reduce){.remfs-orb,.remfs-orb.running::before,.remfs-orb-logo,.remfs-orb-badge,.remfs-peek{animation:none}}
-.remfs-orb-logo{width:26px;height:26px;fill:#fff;pointer-events:none}
-.remfs-orb.alert .remfs-orb-logo{animation:remfs-bob 2.6s ease-in-out infinite}
-.remfs-orb-badge{position:absolute;top:-5px;right:-5px;width:18px;height:18px;border-radius:50%;background:#fff;color:#16181d;font-size:11px;font-weight:800;line-height:1;display:flex;align-items:center;justify-content:center;border:1.5px solid rgba(22,24,29,.18);box-shadow:0 2px 6px rgba(0,0,0,.35);pointer-events:none;animation:remfs-pop .25s cubic-bezier(.2,1.6,.4,1)}
-.remfs-orb-tag{font-size:10px;color:var(--dsw-alias-label-primary,#eee);background:rgba(20,20,24,.82);padding:1px 8px;border-radius:999px;pointer-events:none;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.remfs-peek{position:fixed;right:16px;bottom:76px;z-index:1510;width:min(320px,92vw);background:var(--dsw-specific-sidebar-fill,#202024);border:1px solid rgba(128,128,128,.3);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px;box-shadow:0 8px 28px rgba(0,0,0,.45);animation:remfs-fade-up .18s ease-out}
-.remfs-peek-state{font-size:13px;font-weight:700}
-.remfs-peek-title{font-size:13px}
-.remfs-peek-summary{font-size:12px;color:var(--dsw-alias-label-secondary,#999)}
-.remfs-peek-reasons{font-size:11px;color:var(--dsw-alias-label-secondary,#999)}
-.remfs-peek-prog{font-size:11px;color:var(--dsw-alias-label-secondary,#999)}
-.remfs-peek-actions{display:flex;gap:8px;margin-top:4px}
 .remfs-board{max-height:86vh}
 .remfs-card.stalled{border-color:rgba(255,183,107,.5)}
 .remfs-card-stale{font-size:11px;color:#ffb86b}
@@ -238,8 +205,7 @@ window.__ModuleLoader__.load({
         tabSession: '＋ 新建会话', tabFiles: '📁 文件浏览',
         headSession: '新建会话', headFiles: '文件浏览',
         close: '✕ 关闭', loading: '加载中…',
-        orbTitle: 'Agent 状态', orbTasks: '任务', orbOpen: '打开', orbLockedTitle: '配对后可查看任务详情',
-        orbPeekTitle: '任务进展', orbLastProg: '上次推进', orbNoTask: '无任务',
+        boardButton: '任务', orbLockedTitle: '配对后可查看任务详情',
         boardTitle: 'Agent 任务', boardNeedsYou: '需要你', boardRunning: '运行中', boardNotStarted: '未开始', boardDone: '已完成', boardFailed: '失败',
         boardStalled: '可能停滞', boardOpen: '打开', boardEmpty: '暂无任务', boardLoadFail: '任务加载失败',
         sessSizeWarn: '建议归档', wsSessions: '{n} 个会话 · {size}',
@@ -271,9 +237,9 @@ window.__ModuleLoader__.load({
         devicesTitle: '已配对设备', revokeBtn: '吊销', revokeAllBtn: '吊销全部',
         revokedToast: '✅ 已吊销', noDevices: '暂无设备', devMgmt: '🔐 设备管理',
         pushToggle: '推送通知(关页面也能收到「需要你」)', pushUnsupported: '需 HTTPS(localhost 或 Tailscale HTTPS)', pushEnableErr: '推送不可用,请确认已连接 Tailscale HTTPS',
+        pushTestBtn: '测试推送', pushTestOk: '✅ 已发送 — 请留意手机通知;收不到多为推送服务(如 FCM)不可达', pushTestFail: '❌ 推送发送失败', pushTestNone: '请先开启推送开关',
         rootOutside: '新增目录必须在已批准目录内——在电脑上编辑 .remfs-roots.json 添加新位置',
         authFailed: '设备未授权,请重新配对', capDenied: '此设备没有执行该操作所需的权限',
-        orbUnavail: 'Presence 不可用', orbUnavailHint: '主机无法读取会话(DSH 版本可能不兼容)',
         upstreamDrift: '⚠ DSH 界面结构已变化,移动端布局适配可能失效(功能不受影响)',
         encNotUtf8: '检测到非 UTF-8 编码,请转为 UTF-8 后重试'
       },
@@ -281,8 +247,7 @@ window.__ModuleLoader__.load({
         tabSession: '＋ New Session', tabFiles: '📁 Files',
         headSession: 'New Session', headFiles: 'Files',
         close: '✕ Close', loading: 'Loading…',
-        orbTitle: 'Agent presence', orbTasks: 'Tasks', orbOpen: 'Open', orbLockedTitle: 'Pair to view task details',
-        orbPeekTitle: 'Task progress', orbLastProg: 'Last progress', orbNoTask: 'No tasks',
+        boardButton: 'Tasks', orbLockedTitle: 'Pair to view task details',
         boardTitle: 'Agent tasks', boardNeedsYou: 'Needs You', boardRunning: 'Running', boardNotStarted: 'Not Started', boardDone: 'Done', boardFailed: 'Failed',
         boardStalled: 'Possibly stalled', boardOpen: 'Open', boardEmpty: 'No tasks', boardLoadFail: 'Failed to load tasks',
         sessSizeWarn: 'suggest archiving', wsSessions: '{n} sessions · {size}',
@@ -314,9 +279,9 @@ window.__ModuleLoader__.load({
         devicesTitle: 'Paired devices', revokeBtn: 'Revoke', revokeAllBtn: 'Revoke all',
         revokedToast: '✅ Revoked', noDevices: 'No devices', devMgmt: '🔐 Devices',
         pushToggle: 'Push notifications (get "needs you" with the page closed)', pushUnsupported: 'needs HTTPS (localhost or Tailscale HTTPS)', pushEnableErr: 'Push unavailable — check you are on Tailscale HTTPS',
+        pushTestBtn: 'Test push', pushTestOk: '✅ Sent — watch for the notification; if none arrives the push service (e.g. FCM) is unreachable', pushTestFail: '❌ Test push failed', pushTestNone: 'Enable the push toggle first',
         rootOutside: 'New roots must stay inside approved roots — edit .remfs-roots.json on the PC to add new locations',
         authFailed: 'Device not authorized — please pair again', capDenied: 'This device does not have permission for that operation',
-        orbUnavail: 'Presence unavailable', orbUnavailHint: 'Host cannot read sessions (DSH version may be incompatible)',
         upstreamDrift: '⚠ DSH UI structure changed — mobile layout tweaks may be inactive (features unaffected)',
         encNotUtf8: 'Non-UTF-8 encoding detected — convert to UTF-8 and retry'
       }
@@ -477,40 +442,47 @@ window.__ModuleLoader__.load({
     // ── Presence UI local helpers (mirror lib/presence/ui.js; the browser
     // bundle cannot import the lib module). The pure logic is unit-tested in
     // test/presence-ui.test.js against these EXACT rules.
-    const P_NEEDS = 'NEEDS_USER', P_FAILED = 'FAILED', P_STALE = 'STALE', P_RUNNING = 'RUNNING', P_DONE = 'DONE', P_IDLE = 'IDLE', P_DISC = 'DISCONNECTED'
-    const P_PRIORITY = { [P_NEEDS]: 0, [P_FAILED]: 1, [P_STALE]: 2, [P_RUNNING]: 3, [P_DONE]: 4, [P_IDLE]: 5, [P_DISC]: 6 }
-    const P_LABEL = { [P_IDLE]: { icon: '○', text: 'Idle' }, [P_RUNNING]: { icon: '●', text: 'Running' }, [P_STALE]: { icon: '◐', text: 'Possibly stalled' }, [P_NEEDS]: { icon: '!', text: 'Needs you' }, [P_FAILED]: { icon: '×', text: 'Failed' }, [P_DONE]: { icon: '✓', text: 'Done' }, [P_DISC]: { icon: '?', text: 'Disconnected' } }
-    const P_NOTIFY_DEFAULT = { [P_NEEDS]: true, [P_FAILED]: true, [P_DONE]: false, [P_STALE]: false, [P_RUNNING]: false, [P_IDLE]: false, [P_DISC]: false }
+    const P_NEEDS = 'NEEDS_USER', P_FAILED = 'FAILED', P_STALE = 'STALE', P_RUNNING = 'RUNNING', P_DONE = 'DONE'
 
-    function highestPriorityTaskLocal(tasks) {
-      const list = Array.isArray(tasks) ? tasks : []
-      if (list.length === 0) return null
-      let best = null
-      for (const t of list) {
-        if (!t) continue
-        if (best === null || (P_PRIORITY[t.state] ?? 99) < (P_PRIORITY[best.state] ?? 99)) best = t
-      }
-      return best
-    }
-    function orbStateLocal(task) {
-      if (!task) return { icon: '○', text: P_LABEL[P_IDLE].text, state: P_IDLE, taskId: null, title: '', summary: '' }
-      const label = P_LABEL[task.state] || P_LABEL[P_IDLE]
-      return { icon: label.icon, text: label.text, state: task.state, taskId: task.sessionId || task.taskId || null, title: task.title || '', summary: task.summary || '' }
-    }
-    function quickPeekLocal(task) {
-      const orb = orbStateLocal(task)
-      const now = Date.now()
-      let lastProgressLabel = ''
-      if (task && task.progressHeartbeatAt) {
-        const p = Date.parse(task.progressHeartbeatAt)
-        if (Number.isFinite(p) && p > 0) {
-          const mins = Math.max(1, Math.floor((now - p) / 60000))
-          lastProgressLabel = mins < 60 ? mins + 'm ago' : Math.floor(mins / 60) + 'h ago'
+    // ── Browser notifications (design §14) ────────────────────────────────
+    // NEEDS_USER/FAILED always notify; never RUNNING/STALE/DONE/IDLE. This
+    // used to live inside the floating Orb's refresh loop and was deleted
+    // together with the Orb — but notifications are event delivery, not a
+    // visual; they now run as a HEADLESS poll started from apply(), so the
+    // page alerts the user with no orb and no board open. Permission is only
+    // ever requested by the push toggle; without a grant this stays silent.
+    const P_NOTIFY = { [P_NEEDS]: true, [P_FAILED]: true }
+    const notifiedKeys = {} // sessionId:state -> true (page-lifetime dedupe)
+    function firePresenceNotification(task) {
+      try {
+        if (typeof Notification !== 'function' || Notification.permission !== 'granted') return
+        const title = task.state === P_NEEDS ? t('notifNeedsYou') : task.state === P_FAILED ? t('notifFailed') : t('notifDone')
+        const body = (task.title || task.sessionId) + (task.summary ? ' — ' + task.summary : '')
+        const n = new Notification(title, { body, tag: 'remfs-presence-' + task.sessionId })
+        n.onclick = () => {
+          try { window.focus(); n.close() } catch { /* ignore */ }
+          try {
+            if (window.__remfsSessionsApi && typeof window.__remfsSessionsApi.open === 'function') {
+              window.__remfsSessionsApi.open(task.sessionId)
+            }
+          } catch { /* ignore */ }
         }
-      }
-      return { state: orb.state, icon: orb.icon, text: orb.text, title: orb.title, summary: orb.summary, staleReason: (task && task.staleReason) || [], lastProgressLabel, taskId: orb.taskId }
+      } catch { /* notifications are best-effort */ }
     }
-    function shouldNotifyLocal(state) { return P_NOTIFY_DEFAULT[state] === true }
+    function notifyPresencePoll(conn) {
+      if (typeof Notification !== 'function' || Notification.permission !== 'granted') return
+      pocketRpc(conn, 'presence.tasks', {}).then((r) => {
+        if (!(r && r.ok && r.value && Array.isArray(r.value.tasks))) return
+        for (const task of r.value.tasks) {
+          if (!task || P_NOTIFY[task.state] !== true) continue
+          const key = task.sessionId + ':' + task.state
+          if (notifiedKeys[key]) continue
+          notifiedKeys[key] = true
+          firePresenceNotification(task)
+        }
+      }).catch(() => { /* best-effort */ })
+    }
+
     function groupTasksLocal(tasks) {
       const groups = { needsUser: [], running: [], notStarted: [], done: [], failed: [] }
       for (const t of Array.isArray(tasks) ? tasks : []) {
@@ -534,205 +506,6 @@ window.__ModuleLoader__.load({
       for (const k of Object.keys(groups || {})) out[k] = (groups[k] || []).length
       return out
     }
-    function firePresenceNotification(task) {
-      try {
-        if (typeof Notification !== 'function' || Notification.permission !== 'granted') return
-        const title = task.state === P_NEEDS ? t('notifNeedsYou') : task.state === P_FAILED ? t('notifFailed') : t('notifDone')
-        const body = (task.title || task.sessionId) + (task.summary ? ' — ' + task.summary : '')
-        const n = new Notification(title, { body, tag: 'remfs-presence-' + task.sessionId })
-        n.onclick = () => {
-          try { window.focus(); n.close() } catch { /* ignore */ }
-          try {
-            if (window.__remfsSessionsApi && typeof window.__remfsSessionsApi.open === 'function') {
-              window.__remfsSessionsApi.open(task.sessionId)
-            }
-          } catch { /* ignore */ }
-        }
-      } catch { /* notifications are best-effort */ }
-    }
-
-    // ── Agent Presence (Phase B): Orb + Task Board + notifications ─────────
-    // All UI consumes ONLY the presence task DTOs (single source of truth,
-    // design §25). Orb / Quick Peek / Board / notification never re-derive
-    // state from raw events. The pure logic lives in lib/presence/ui.js and is
-    // unit-tested; this file only renders it.
-
-    // Floating ball: fixed over the page, draggable via pointer capture.
-    // Drag vs click: any pointer move beyond 4px counts as a drag and
-    // suppresses the click (peek toggle).
-    //
-    // The ball face is the DSH brand whale (official favicon path) on a
-    // bright blue gradient, with the presence STATE as: colored ring, corner
-    // badge (state icon) and the text tag below — state is never color-only.
-    const WHALE_LOGO_PATH = 'M48.8354 10.0479C48.3232 9.79199 48.1025 10.2798 47.8032 10.5278C47.7007 10.6079 47.6143 10.7119 47.5273 10.8076C46.7793 11.624 45.9048 12.1597 44.7622 12.0957C43.0923 12 41.666 12.5356 40.4058 13.8398C40.1377 12.2319 39.2476 11.272 37.8926 10.6558C37.1836 10.3359 36.4668 10.0156 35.9702 9.31982C35.6235 8.82373 35.5293 8.27197 35.356 7.72754C35.2456 7.3999 35.1353 7.06396 34.7651 7.00781C34.3633 6.94385 34.2056 7.2876 34.0479 7.57568C33.418 8.75195 33.1733 10.0479 33.1973 11.3599C33.2524 14.312 34.4736 16.6641 36.8999 18.3359C37.1758 18.5278 37.2466 18.7197 37.1597 19C36.9946 19.5757 36.7974 20.1357 36.624 20.7119C36.5137 21.0801 36.3486 21.1597 35.9624 21C34.6309 20.4321 33.481 19.5918 32.4644 18.5757C30.7393 16.8721 29.1792 14.9917 27.2334 13.52C26.7764 13.1758 26.3193 12.856 25.8467 12.5518C23.8618 10.584 26.1069 8.96777 26.627 8.77588C27.1704 8.57568 26.8159 7.8877 25.0591 7.896C23.3022 7.90381 21.6953 8.50391 19.647 9.30371C19.3477 9.42383 19.0322 9.51172 18.7095 9.58398C16.8501 9.22363 14.9199 9.14355 12.9033 9.37598C9.10596 9.80762 6.07275 11.6396 3.84326 14.7681C1.16455 18.5278 0.53418 22.7998 1.30664 27.2559C2.11768 31.9521 4.46582 35.8398 8.07373 38.8799C11.8159 42.0322 16.1255 43.5762 21.041 43.2803C24.0269 43.104 27.3516 42.6963 31.1016 39.4561C32.0469 39.936 33.0396 40.1279 34.686 40.272C35.9546 40.3921 37.1758 40.208 38.1211 40.0078C39.6021 39.688 39.4995 38.2881 38.9639 38.0322C34.623 35.9678 35.5762 36.8081 34.71 36.1279C36.9155 33.4639 40.2402 30.6958 41.54 21.728C41.6426 21.0161 41.5557 20.5679 41.54 19.9917C41.5322 19.6396 41.6108 19.5039 42.0049 19.4639C43.0923 19.3359 44.1479 19.0317 45.1167 18.4878C47.9292 16.9199 49.064 14.3438 49.3315 11.2559C49.3711 10.7837 49.3237 10.2959 48.8354 10.0479ZM24.3262 37.8398C20.1196 34.4639 18.0791 33.3521 17.2358 33.3999C16.4482 33.4482 16.5898 34.3682 16.7632 34.9678C16.9443 35.5601 17.1812 35.9683 17.5117 36.4878C17.7402 36.832 17.8979 37.3442 17.2832 37.728C15.9282 38.584 13.5728 37.4399 13.4624 37.3838C10.7207 35.7358 8.42822 33.5601 6.81348 30.584C5.25342 27.7197 4.34766 24.6479 4.19775 21.3677C4.1582 20.5757 4.38672 20.2959 5.15869 20.1519C6.17529 19.96 7.22314 19.9199 8.23926 20.0718C12.5327 20.7119 16.1885 22.6719 19.2529 25.7759C21.002 27.5439 22.3252 29.6558 23.6885 31.7202C25.1377 33.9121 26.6978 36 28.6831 37.7119C29.3843 38.312 29.9434 38.7681 30.479 39.104C28.8643 39.2881 26.1699 39.3281 24.3262 37.8398ZM26.3433 24.6001C26.3433 24.248 26.6191 23.9678 26.9658 23.9678C27.0444 23.9678 27.1152 23.9839 27.1782 24.0078C27.2651 24.04 27.3438 24.0879 27.4067 24.1602C27.5171 24.272 27.5801 24.4321 27.5801 24.6001C27.5801 24.9521 27.3042 25.2319 26.9575 25.2319C26.6108 25.2319 26.3433 24.9521 26.3433 24.6001ZM32.6064 27.8799C32.2046 28.0479 31.8027 28.1919 31.4165 28.208C30.8179 28.2397 30.1641 27.9922 29.8096 27.688C29.2583 27.2158 28.8643 26.9521 28.6987 26.1279C28.6279 25.7759 28.6675 25.2319 28.7305 24.9199C28.8721 24.248 28.7144 23.8159 28.2495 23.4238C27.8716 23.104 27.3911 23.0161 26.8633 23.0161C26.666 23.0161 26.4849 22.9277 26.3511 22.856C26.1304 22.7441 25.9492 22.4639 26.1226 22.1201C26.1777 22.0078 26.4458 21.7358 26.5088 21.688C27.2256 21.272 28.0527 21.4077 28.8169 21.7197C29.5259 22.0161 30.0615 22.5601 30.834 23.3281C31.6216 24.2559 31.7632 24.5117 32.2124 25.208C32.5669 25.752 32.8901 26.312 33.1104 26.9521C33.2446 27.3521 33.0713 27.6802 32.6064 27.8799Z'
-    function PresenceOrb({ conn, sessionsApi }) {
-      const [tasks, setTasks] = React.useState([])
-      const [peekOpen, setPeekOpen] = React.useState(false)
-      const [notified, setNotified] = React.useState({}) // state-per-session notification dedup
-      const [lastOrb, setLastOrb] = React.useState(null)
-      const [presenceErr, setPresenceErr] = React.useState(null) // host error code, or null
-      const [pos, setPos] = React.useState(() => {
-        try {
-          const raw = window.localStorage.getItem('remfs-orb-pos')
-          if (raw) {
-            const p = JSON.parse(raw)
-            if (p && typeof p.x === 'number' && typeof p.y === 'number') return { x: p.x, y: p.y }
-          }
-        } catch { /* ignore */ }
-        return null
-      }) // {x,y} after drag; null = default corner
-      const posRef = React.useRef(null)
-      const [firstRun, setFirstRun] = React.useState(() => {
-        try { return window.localStorage.getItem('remfs-orb-hint') !== '1' } catch { return false }
-      })
-      const dragRef = React.useRef(null)
-      const draggedRef = React.useRef(false)
-
-      const openSession = (id) => {
-        try {
-          if (sessionsApi && typeof sessionsApi.open === 'function') { sessionsApi.open(id) }
-        } catch { /* ignore */ }
-      }
-
-      const refresh = () => {
-        pocketRpc(conn, 'presence.tasks', {}).then((r) => {
-          // A host-reported error (capability-unavailable, sessions-shape-
-          // mismatch, …) means presence is BROKEN, not quiet. Swallowing it
-          // left the Orb on "Idle" — the 942db92 silent-failure mode. Surface
-          // it as a distinct unavailable state instead.
-          if (!(r && r.ok)) {
-            setPresenceErr((r && r.error && r.error.code) || 'unknown')
-            return
-          }
-          setPresenceErr(null)
-          const list = (r.value && r.value.tasks) || []
-          setTasks(list)
-          // notification rules (design §14): NEEDS_USER/FAILED always; DONE
-          // off by default; never RUNNING/STALE. Dedup per session+state.
-          const seen = {}
-          for (const task of list) {
-            const key = task.sessionId + ':' + task.state
-            if (shouldNotifyLocal(task.state) && !notified[key]) {
-              seen[key] = true
-              firePresenceNotification(task)
-            }
-          }
-          if (Object.keys(seen).length > 0) {
-            setNotified((prev) => Object.assign({}, prev, seen))
-          }
-          const orb = highestPriorityTaskLocal(list)
-          setLastOrb(orb)
-        }).catch(() => { /* orb stays as-is on transient errors */ })
-      }
-
-      React.useEffect(() => { refresh() }, [])
-      React.useEffect(() => {
-        // design §39: no aggressive polling; 8s is enough for Phase B proof.
-        const h = setInterval(refresh, 8000)
-        return () => { try { clearInterval(h) } catch { /* ignore */ } }
-      }, [])
-      React.useEffect(() => {
-        // first-run hint: open the peek once so the ball explains itself.
-        if (firstRun) {
-          setPeekOpen(true)
-          try { window.localStorage.setItem('remfs-orb-hint', '1') } catch { /* ignore */ }
-        }
-      }, [])
-
-      const onPointerDown = (e) => {
-        draggedRef.current = false
-        dragRef.current = { x: e.clientX, y: e.clientY }
-        try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
-      }
-      const onPointerMove = (e) => {
-        const d = dragRef.current
-        if (!d) return
-        const dx = e.clientX - d.x
-        const dy = e.clientY - d.y
-        if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return
-        draggedRef.current = true
-        const rect = e.currentTarget.getBoundingClientRect()
-        const vw = (window.innerWidth || 0)
-        const vh = (window.innerHeight || 0)
-        const x = Math.min(Math.max(4, rect.left + dx), Math.max(4, vw - rect.width - 4))
-        const y = Math.min(Math.max(4, rect.top + dy), Math.max(4, vh - rect.height - 4))
-        const next = { x, y }
-        posRef.current = next
-        setPos(next)
-        d.x = e.clientX
-        d.y = e.clientY
-      }
-      const onPointerUp = () => {
-        if (draggedRef.current && posRef.current) {
-          try { window.localStorage.setItem('remfs-orb-pos', JSON.stringify(posRef.current)) } catch { /* ignore */ }
-        }
-        dragRef.current = null
-      }
-
-      // Presence errors override the task-derived state: an Orb that cannot
-      // see the sessions must say so, never impersonate "Idle".
-      const orb = presenceErr
-        ? { icon: '?', text: t('orbUnavail'), state: P_DISC, taskId: null, title: '', summary: '' }
-        : orbStateLocal(lastOrb)
-      const qp = presenceErr
-        ? { state: P_DISC, icon: '?', text: t('orbUnavail'), title: t('orbUnavailHint') + ' (' + presenceErr + ')', summary: '', staleReason: [], lastProgressLabel: '', taskId: null }
-        : quickPeekLocal(lastOrb)
-      const paired = getCred() !== null
-      const orbQuiet = orb.state === P_IDLE || orb.state === P_DONE || orb.state === P_DISC
-      const orbAlert = orb.state === P_NEEDS || orb.state === P_FAILED
-      const displayTitle = paired ? (qp.title || t('orbNoTask')) : t('orbLockedTitle')
-      const displaySummary = paired ? qp.summary : null
-      const wrapStyle = pos ? { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' } : null
-      const peekStyle = pos
-        ? { left: Math.max(8, Math.min(pos.x - 160, (window.innerWidth || 0) - 328)), top: Math.max(8, pos.y - 230), right: 'auto', bottom: 'auto' }
-        : null
-
-      return React.createElement(React.Fragment, null,
-        React.createElement('div', {
-          className: 'remfs-orbwrap' + (draggedRef.current ? ' drag' : '') + (orbQuiet ? ' quiet' : ''),
-          style: wrapStyle,
-          onPointerDown,
-          onPointerMove,
-          onPointerUp,
-          onPointerCancel: onPointerUp,
-        },
-          React.createElement('button', {
-            className: 'remfs-orb' + (orb.state === P_RUNNING ? ' running' : '') + (orbAlert ? ' alert' : ''),
-            title: t('orbTitle') + ': ' + orb.text + (paired && orb.title ? ' — ' + orb.title : ''),
-            style: { borderColor: orb.color, '--orb-glow': orb.color },
-            onClick: () => {
-              if (draggedRef.current) { draggedRef.current = false; return }
-              setPeekOpen(!peekOpen)
-            },
-          },
-            React.createElement('svg', { className: 'remfs-orb-logo', viewBox: '0 0 50 50', 'aria-hidden': 'true' },
-              React.createElement('path', { d: WHALE_LOGO_PATH })
-            ),
-            React.createElement('span', { key: orb.state, className: 'remfs-orb-badge' }, orb.icon)
-          ),
-          React.createElement('span', { className: 'remfs-orb-tag' }, orb.text)
-        ),
-        peekOpen ? React.createElement('div', { className: 'remfs-peek', style: peekStyle },
-          React.createElement('div', { className: 'remfs-peek-state', style: { color: orb.color } }, qp.icon + ' ' + qp.text),
-          React.createElement('div', {
-            className: 'remfs-peek-title',
-            style: qp.taskId && paired ? { cursor: 'pointer', color: 'var(--dsw-alias-interactive,#4a6cf7)' } : undefined,
-            title: qp.taskId && paired ? t('orbOpen') : undefined,
-            onClick: () => { if (qp.taskId && paired) { openSession(qp.taskId); setPeekOpen(false) } }
-          }, displayTitle),
-          displaySummary ? React.createElement('div', { className: 'remfs-peek-summary' }, displaySummary) : null,
-          qp.staleReason && qp.staleReason.length > 0
-            ? React.createElement('div', { className: 'remfs-peek-reasons' }, qp.staleReason.map((r, i) => React.createElement('div', { key: i }, '· ' + r)))
-            : null,
-          qp.lastProgressLabel ? React.createElement('div', { className: 'remfs-peek-prog' }, t('orbLastProg') + ' · ' + qp.lastProgressLabel) : null,
-          React.createElement('div', { className: 'remfs-peek-actions' },
-            React.createElement('button', { className: 'remfs-btn', onClick: () => { setPeekOpen(false); openBoard() } }, t('orbTasks')),
-            React.createElement('button', { className: 'remfs-btn primary', disabled: !qp.taskId, onClick: () => { if (qp.taskId) openSession(qp.taskId); setPeekOpen(false) } }, t('orbOpen'))
-          )
-        ) : null
-      )
-    }
-
     function PresenceBoard({ conn, sessionsApi, onClose, paired }) {
       const [tasks, setTasks] = React.useState([])
       const [loading, setLoading] = React.useState(true)
@@ -741,7 +514,10 @@ window.__ModuleLoader__.load({
       const refresh = () => {
         pocketRpc(conn, 'presence.tasks', {}).then((r) => {
           if (r && r.ok) { setTasks((r.value && r.value.tasks) || []); setErr(null) }
-          else if (r && !r.ok) setErr(t('boardLoadFail'))
+          // Surface the host's error code (sessions-unavailable = upstream
+          // shape drift, capability-unavailable = presence disabled) instead
+          // of one generic string — a drift diagnosis must stay diagnosable.
+          else if (r && !r.ok) setErr(t('boardLoadFail') + (r.error && r.error.code ? ' (' + r.error.code + ')' : ''))
           setLoading(false)
         }).catch(() => { setLoading(false); setErr(t('boardLoadFail')) })
       }
@@ -792,14 +568,16 @@ window.__ModuleLoader__.load({
       return React.createElement('div', { className: 'remfs-panel remfs-board' },
         React.createElement('div', { className: 'remfs-head' },
           React.createElement('b', null, t('boardTitle')),
-          React.createElement('span', { className: 'p' }, counts.needsYou + ' need · ' + counts.running + ' run'),
+          React.createElement('span', { className: 'p' }, counts.needsUser + ' need · ' + counts.running + ' run'),
           React.createElement('button', { className: 'remfs-btn remfs-close', onClick: onClose }, t('close'))
         ),
         body
       )
     }
 
-    // Board overlay state: opened from the Orb Quick Peek [Tasks] action.
+    // Board overlay state: opened from the compact header action. The browser
+    // no longer carries a second floating companion; that role belongs to the
+    // always-on-top Windows widget.
     let boardOpen = false
     const boardListeners = new Set()
     const setBoardOpen = (v) => { boardOpen = v; boardListeners.forEach((fn) => fn()) }
@@ -814,9 +592,6 @@ window.__ModuleLoader__.load({
         React.createElement(PresenceBoard, { conn, sessionsApi: window.__remfsSessionsApi, onClose: () => setBoardOpen(false), paired: getCred() !== null })
       )
     }
-
-    // Expose board-open to the Orb Quick Peek [Tasks] button.
-    const openBoard = () => setBoardOpen(true)
 
     function Workbench({ embedded, onClose, conn }) {
       const [tab, setTab] = React.useState('files')
@@ -1192,7 +967,22 @@ window.__ModuleLoader__.load({
         React.createElement('label', { className: 'remfs-hidebox', style: { marginTop: 8, borderTop: '1px solid rgba(128,128,128,.25)', paddingTop: 8 }, title: t('pushUnsupported') },
           React.createElement('input', { type: 'checkbox', checked: pushEnabled(), disabled: !pushOk, onChange: (e) => onTogglePush(e.target.checked) }),
           t('pushToggle'),
-          pushOk ? null : React.createElement('span', { style: { color: 'var(--dsw-alias-label-secondary,#999)', fontSize: 11 } }, ' · ' + t('pushUnsupported'))
+          pushOk ? null : React.createElement('span', { style: { color: 'var(--dsw-alias-label-secondary,#999)', fontSize: 11 } }, ' · ' + t('pushUnsupported')),
+          // End-to-end delivery check: a dead push channel (FCM unreachable,
+          // stale endpoint) looks exactly like "no events" — this makes it
+          // testable at setup time instead of discovered at failure time.
+          pushOk && pushEnabled() ? React.createElement('button', {
+            className: 'remfs-btn', style: { marginLeft: 8 },
+            onClick: (e) => {
+              e.preventDefault()
+              pocketRpc(conn, 'push.test', {}).then((r) => {
+                if (r && r.ok && r.value && r.value.sent > 0) showToast(t('pushTestOk'), 'success')
+                else if (r && !r.ok && r.error && r.error.code === 'capability-denied') showToast(t('capDenied'), 'error')
+                else if (r && !r.ok && r.error && /no subscription/i.test(r.error.message || '')) showToast(t('pushTestNone'), 'error')
+                else showToast(t('pushTestFail'), 'error')
+              }).catch(() => showToast(t('pushTestFail'), 'error'))
+            },
+          }, t('pushTestBtn')) : null
         ),
         React.createElement('div', { className: 'remfs-tools' },
           React.createElement('button', { className: 'remfs-btn', onClick: () => { setDevicesOpen(false); setMoreOpen(true) } }, t('cancel')),
@@ -1333,6 +1123,17 @@ window.__ModuleLoader__.load({
       return React.createElement('button', { className: 'remfs-hbtn' + (open ? ' open' : ''), title: open ? t('toggleTitleOpen') : t('headerNew'), onClick: () => setOpen(!open) }, open ? t('close') : t('headerNew'))
     }
 
+    function PresenceBoardToggle() {
+      const [, force] = React.useState(0)
+      React.useEffect(() => subscribeBoard(() => force((n) => n + 1)), [])
+      React.useEffect(() => subscribeLang(() => force((n) => n + 1)), [])
+      return React.createElement('button', {
+        className: 'remfs-hbtn' + (boardOpen ? ' open' : ''),
+        title: t('boardTitle'),
+        onClick: () => setBoardOpen(!boardOpen)
+      }, t('boardButton'))
+    }
+
     function OverlayBridge({ conn }) {
       const [, force] = React.useState(0)
       React.useEffect(() => subscribe(() => force((n) => n + 1)), [])
@@ -1446,6 +1247,11 @@ window.__ModuleLoader__.load({
         () => React.createElement(WorkbenchToggle, null)
       ))
 
+      ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register(
+        { name: 'conversation.session.header.utilities', id: 'remfs.presence.tasks', order: 21, label: () => t('boardTitle') },
+        () => React.createElement(PresenceBoardToggle, null)
+      ))
+
       ctx.slots.inject('settings.section', () => ctx.slots.register(
         { name: 'settings.section', id: 'remfs.page', order: 60, label: t('slotPageLabel') },
         (props) => React.createElement(Workbench, { embedded: true, conn, onClose: props && typeof props.close === 'function' ? props.close : null })
@@ -1454,11 +1260,6 @@ window.__ModuleLoader__.load({
       ctx.slots.inject('shell.overlay', () => ctx.slots.register(
         { name: 'shell.overlay', id: 'remfs.panel' },
         () => React.createElement(OverlayBridge, { conn })
-      ))
-
-      ctx.slots.inject('shell.overlay', () => ctx.slots.register(
-        { name: 'shell.overlay', id: 'remfs.presence.orb' },
-        () => React.createElement(PresenceOrb, { conn, sessionsApi: window.__remfsSessionsApi })
       ))
 
       ctx.slots.inject('shell.overlay', () => ctx.slots.register(
@@ -1471,6 +1272,13 @@ window.__ModuleLoader__.load({
       // registration is shared with the Workbench via __remfsPushReg.
       setupPush(conn).then((r) => {
         if (r && r.reg) { try { window.__remfsPushReg = r.reg } catch { /* ignore */ } }
+      })
+
+      // Headless presence-notification poll (page open, permission granted).
+      ctx.effect(() => {
+        const id = setInterval(() => notifyPresencePoll(conn), 8000)
+        notifyPresencePoll(conn)
+        return () => clearInterval(id)
       })
     }
 

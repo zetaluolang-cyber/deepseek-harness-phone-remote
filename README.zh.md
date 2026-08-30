@@ -43,13 +43,13 @@ flowchart LR
 
 ## 功能
 
-- **一键部署(自动装依赖)**——`install.ps1` 校验 Node 版本(^22.19 || >=24)、自动装 Node.js/Tailscale、引导一次性登录(登录后重新读取真实 MagicDNS 名,绝不伪造)、写启动脚本、开 HTTPS Serve、装插件、注册开机自启。
+- **一键引导部署**——`install.ps1` 校验/升级 Node(^22.19 || >=24)、自动装 Node.js/Tailscale、执行真正的 Tailscale 设备登录、把 DSH 独立安装到 `~/.dsh/runtime`(不再依赖偶然存在的 npx 缓存)、创建 web profile、部署插件和启动器、注册自启，最后真实启动并验活 Harness 与插件路由，成功后才打印 `DONE`。
 - **Walk-on-LAN(默认关闭,可选开启)**——在 `%USERPROFILE%\.dsh\lan-on` 创建标记文件(或设环境变量 `DSH_REMFS_LAN=1`)后,才会信任局域网 IP 并启动局域网转发器;同一 Wi-Fi 下手机可绕过 Tailscale 直连 `http://192.168.x.x:3080`,`/remfs` 依旧设备认证。开启会扩大网络暴露面,所以必须显式选择。
 - **持久化插件**——loader 条目;host 通道随启动注册,客户端模块随页面加载。
-- **PC 顶置悬浮球**——`scripts/orb-widget.ps1`(双击 `scripts/start-orb-widget.cmd`,部署到 `~/.dsh/launcher`):零依赖 WinForms 小球,始终置顶显示最高优先级的 Agent 状态,可拖动(位置持久化),单击打开 Harness。轮询与网页悬浮球相同的任务数据(`/remfs-presence.json`)。`install.ps1` 同时注册**登录自启**(Startup 文件夹条目;单实例,自启与 .cmd 不会叠加——删除 Startup 里的 `dsh-orb-widget.cmd` 即可关闭)。
+- **PC 顶置桌面伴侣**——`scripts/orb-widget.ps1`(双击 `scripts/start-orb-widget.cmd`,部署到 `~/.dsh/launcher`):零依赖 WinForms 小球,始终置顶显示最高优先级的 Agent 状态,支持跨屏拖动并持久化位置。单击展开当前任务、摘要、刷新/日志和“打开 Harness”操作。网页不再重复显示悬浮球,任务板改为普通页头按钮。`install.ps1` 同时注册**登录自启**(原子单实例;删除 Startup 里的 `dsh-orb-widget.cmd` 即可关闭)。
 - **手机推送通知(关页面也能收到)**——可选的 Web Push 通道:手机注册同源 Service Worker(`/remfs-sw.js`),配对后订阅(使用 host 的 VAPID 公钥)。宿主在 NEEDS_USER/FAILED(及可选 DONE)状态变化时推送,标签页关闭也能收到。RFC 8291 加密为手写实现(零依赖),已与官方 RFC 测试向量逐字节对拍。需要 HTTPS(Tailscale HTTPS 或 localhost)。详见 [docs/presence-push.md](docs/presence-push.md)。
 - **设备配对与管理**——一次性配对码(10 分钟有效、仅一次);列出/吊销/吊销全部设备;凭据只存哈希。
-- **手机工作台**——新建会话/文件浏览双标签、面包屑、预览/编辑/上传/下载、工作区徽标、悬浮球、侧栏自动收起、中英双语。
+- **手机工作台**——新建会话/文件浏览双标签、面包屑、预览/编辑/上传/下载、工作区徽标、任务板按钮、侧栏自动收起、中英双语。
 - **host 层保护路径**,分两级:
   - **硬拦截——无论白名单如何、也无论你注册了什么工作区,都不可达**:系统目录(`Windows`/`System32`/`SysWOW64`)与凭据/密钥文件(`.credentials.yaml`/`.ssh`/`.aws`/`.gnupg`/`.env`/`id_rsa`/`*.pem` 等)。
   - **软拦截——默认阻断,但你在本机把工作区精确注册到该目录时可达**:`AppData`、`Program Files`、`ProgramData` 与隐私数据目录(微信/WPS)。它们是隐私边界而非凭据边界;注册这类目录是只有本机用户才能做的决定,且不会因此解锁其下的硬拦截文件。
@@ -63,7 +63,7 @@ flowchart LR
 - **文件白名单是主要文件权限边界**:远程客户端只能*收窄*白名单;扩大(`C:\`、新盘符)必须在本机编辑 `.remfs-roots.json`。
 - **路径逃逸双重防御**:带 `..`/UNC 的原始路径直接拒绝;规范后的 realpath 必须落在白名单内(符号链接/junction 逃逸失败)。
 - **远端写入有编码保护**:上传/编辑非 UTF-8 文件(UTF-16 BOM、GBK/ANSI 字节)会被拒绝而不是写坏;编辑写回时保留原文件的 UTF-8 BOM 与换行风格(CRLF/LF)。
-- **presence 只读围栏是运维开关**:默认 Orb/任务板在浏览器信任围栏内免认证可用;在 `~/.dsh/remfs-options.json` 设 `pocketStrict: true` 后,所有 `/pocket` 调用(含 `/remfs-presence.json`)都必须携带有效设备凭据。
+- **presence 只读围栏是运维开关**:默认任务板在浏览器信任围栏内免认证可用;在 `~/.dsh/remfs-options.json` 设 `pocketStrict: true` 后,浏览器的所有 `/pocket` 调用都必须携带有效设备凭据。桌面伴侣使用独立的 256 位本机只读 presence 令牌,令牌文件属于远程文件硬拦截项。
 - **推送订阅只属于已配对设备**:注册订阅需要有效设备凭据;被吊销设备的订阅一分钟后清理;任务标题/摘要只推送给已配对设备。VAPID 密钥存于 `~/.dsh/remfs-push.json`(绝不进仓库)。
 - **Tailscale ACL 建议硬化**为仅手机可访问 443/3080——见 [docs/tailscale-acls.md](docs/tailscale-acls.md)。
 - 完整威胁模型见 [SECURITY.md](SECURITY.md);升级前备份与验证清单见 [docs/upgrade.md](docs/upgrade.md)。
@@ -86,7 +86,18 @@ dsh plugin --profile web add @zetaluolang/remfs-persistent
 # 重启 dsh web
 ```
 
-**普通 Windows 用户(一键):** 双击 **`一键部署.cmd`** ——校验 Node 版本(^22.19 || >=24)、自动装 Node.js + Tailscale、引导登录、写启动脚本、注册自愈看门狗、开 HTTPS Serve、装插件,并打印手机访问地址(HTTPS / Tailscale IP / 开启 walk-on-LAN 时含 LAN IP)。
+**普通 Windows 用户(一键):** 下载并解压仓库后，双击 **`一键部署.cmd`**。
+安装过程需要联网；脚本会处理 Node、Tailscale、项目自管的 DSH runtime、
+profile/插件、启动器、看门狗和首次启动。唯一有意保留的人工步骤是
+Tailscale 登录/UAC。只有本机 Harness 与插件路由通过真实验活后才会打印
+`DONE`，因此此时打印的手机地址已经可用。Tailscale HTTPS 证书可能仍需在
+管理后台首次启用。
+
+悬浮球是安装后的日常状态入口，不承担安装事务：它是没有黑色底卡的真透明
+球体，鼠标悬停会显示当前状态和任务标题；拖动由 Windows 合成器原生接管，
+避免闪烁和追手感。不同状态会触发环绕火花、拖尾、爆发粒子和旋转能量环；
+单击仍可打开任务快捷面板。它随登录启动，部署和修复仍由有明确成功/失败
+输出的 `install.ps1` 完成。
 
 ### 自愈看门狗
 
@@ -132,7 +143,7 @@ dsh plugin --profile web add @zetaluolang/remfs-persistent
 ## 实测设备
 
 - OPPO Find X8 Ultra(真机)。
-- 模拟矩阵:iPhone 16 Pro/SE、Pixel 8、Galaxy S24、Redmi Note、iPad Air、iPhone 横屏——侧栏收起、悬浮球、面板宽度、无溢出均通过。见 `docs/device-tests/`。
+- 模拟矩阵:iPhone 16 Pro/SE、Pixel 8、Galaxy S24、Redmi Note、iPad Air、iPhone 横屏——侧栏收起、任务板按钮、面板宽度、无溢出均通过。见 `docs/device-tests/`。
 
 ## Roadmap
 

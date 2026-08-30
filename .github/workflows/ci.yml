@@ -77,6 +77,12 @@ jobs:
       - name: Deployment smoke test
         shell: pwsh
         run: ./test/install-smoke.ps1
+      - name: Desktop companion runtime smoke test
+        shell: powershell
+        run: ./scripts/orb-widget.ps1 -SmokeTest -Quiet
+      - name: Clean-user one-click install (isolated profile, offline DSH fixture)
+        shell: powershell
+        run: ./test/clean-install.integration.ps1
       - name: Launcher ownership regression (dummy :3080 + owned-kill)
         shell: pwsh
         run: ./test/launcher-ownership.ps1

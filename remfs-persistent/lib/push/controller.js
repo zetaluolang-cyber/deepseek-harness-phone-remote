@@ -24,7 +24,7 @@ function labelsFor(lang) {
  * @param {(deviceId: string) => Promise<boolean>} deps.isDeviceValid - device-store membership check for pruning.
  * @param {{push:{done:boolean, intervalSeconds:number}}} deps.options
  * @param {(msg: string) => void} [deps.log=console.log]
- * @param {(endpoint:string, keys:any, payload:Buffer, vapid:any, subject:string, extra:any) => Promise<any>} [deps.sender=sendPush]
+ * @param {(opts:{endpoint:string,keys:any,payload:Buffer,vapid:any,subject:string,extra:any}) => Promise<any>} [deps.sender=sendPush]
  */
 export function createPushController(deps) {
   const {
@@ -93,9 +93,21 @@ export function createPushController(deps) {
             url: '/',
             sessionId,
           })
-          const result = await sender(sub.endpoint, sub.keys, Buffer.from(payload, 'utf8'), vapid, subject, {
-            ttlSeconds: 86400,
-            urgency: state === 'NEEDS_USER' || state === 'FAILED' ? 'high' : 'normal',
+          // sendPush takes ONE options object. This call was positional until
+          // 2026-08 — every argument landed in `opts` as a bare string, so the
+          // dispatcher had never delivered a single real push; the cycle-level
+          // catch swallowed the throw as "cycle failed". The calling
+          // convention is now pinned by test/push-controller.test.js.
+          const result = await sender({
+            endpoint: sub.endpoint,
+            keys: sub.keys,
+            payload: Buffer.from(payload, 'utf8'),
+            vapid,
+            subject,
+            extra: {
+              ttlSeconds: 86400,
+              urgency: state === 'NEEDS_USER' || state === 'FAILED' ? 'high' : 'normal',
+            },
           })
           if (result.status === 'sent') {
             sentAny = true

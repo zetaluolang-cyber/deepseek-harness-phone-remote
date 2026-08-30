@@ -72,11 +72,12 @@ authentication. Pairing and the filesystem capability layer are.
 
 ## Features
 
-- **One-click deploy (auto-installs prerequisites)** — `install.ps1` validates
-  the Node version (^22.19 || >=24), installs missing Node.js / Tailscale
-  (winget), guides the one-time Tailscale sign-in (re-reads the real MagicDNS
-  name — never a fabricated one), writes the launcher, enables HTTPS Serve,
-  installs the plugin, registers auto-start on login.
+- **One-click guided deploy** — `install.ps1` validates/upgrades Node
+  (^22.19 || >=24), installs missing Node.js / Tailscale (winget), runs the
+  real one-time Tailscale device login, installs a private DSH runtime under
+  `~/.dsh/runtime` (never an incidental npx cache), creates the web profile,
+  installs the plugin, writes the launcher, registers auto-start, then starts
+  and health-checks Harness plus the plugin route before printing `DONE`.
 - **Walk-on-LAN (opt-in)** — off by default. Create `%USERPROFILE%\.dsh\lan-on`
   (or set `DSH_REMFS_LAN=1`) to trust the LAN IP and start the LAN forwarder;
   on the same Wi-Fi the phone can then skip Tailscale (`http://192.168.x.x:3080`).
@@ -86,9 +87,15 @@ authentication. Pairing and the filesystem capability layer are.
   client module loads on every page. No re-running after refresh.
 - **PC always-on-top Orb** — `scripts/orb-widget.ps1` (double-click
   `scripts/start-orb-widget.cmd`, deployed to `~/.dsh/launcher`): a
-  zero-dependency WinForms ball that stays above every window, shows the
-  highest-priority agent state, is draggable (position persisted), and opens
-  the harness on click. Polls the same task DTOs (`/remfs-presence.json`).
+  zero-dependency, per-pixel-alpha WinForms orb that stays above every window
+  with no rectangular backing card. Hover it for the current state and task
+  title; drag uses native compositor movement for smooth, flicker-free motion
+  (position persists across monitors). State-aware orbital sparks, comet
+  trails, bursts and energy rings animate the orb. Click it for a companion
+  panel with the current task, summary, refresh/log actions, and an **Open
+  Harness** button. The browser has no duplicate floating ball; its Task Board
+  is a normal header action. Polls the same task DTOs
+  (`/remfs-presence.json`).
   `install.ps1` also registers **auto-start at logon** (a Startup-folder
   entry; single-instance, so the auto-start and the .cmd never stack —
   remove `dsh-orb-widget.cmd` from the Startup folder to disable).
@@ -102,7 +109,7 @@ authentication. Pairing and the filesystem capability layer are.
 - **Device pairing & management** — one-time pairing code (10 min TTL, single
   use); list / revoke / revoke-all devices; credentials stored only as hashes.
 - **Mobile-first workbench** — New Session / Files tabs, breadcrumbs, preview /
-  edit / upload / download, workspace badges, floating ball, auto-collapsed
+  edit / upload / download, workspace badges, Task Board action, auto-collapsed
   sidebar, bilingual UI (EN/zh).
 - **Host-enforced protected paths**, in two tiers:
   - **Hard-denied — never reachable, regardless of the allowlist or of any
@@ -140,9 +147,11 @@ authentication. Pairing and the filesystem capability layer are.
   corrupting it, and the UTF-8 BOM + dominant newline style (CRLF/LF) of an
   edited file are preserved on write-back.
 - **The presence read-only fence is an operator switch**: by default the
-  Orb/Task Board work unauthenticated inside the browser-trust fence; setting
+  Task Board works unauthenticated inside the browser-trust fence; setting
   `pocketStrict: true` in `~/.dsh/remfs-options.json` requires a valid device
-  credential for every `/pocket` call (and for `/remfs-presence.json`).
+  credential for every browser `/pocket` call. The desktop companion uses a
+  separate 256-bit local, read-only presence token; its token file is remotely
+  hard-denied.
 - **Push subscriptions are paired-device-only**: registering a subscription
   requires a valid device credential; revoked devices are pruned within a
   minute; task titles/summaries are pushed only to paired devices. VAPID keys
@@ -175,11 +184,17 @@ dsh plugin --profile web add @zetaluolang/remfs-persistent
 # restart dsh web
 ```
 
-**Windows users (one-click):** double-click **`一键部署.cmd`** — it validates
-the Node version (^22.19 || >=24), auto-installs Node.js + Tailscale, guides the
-Tailscale sign-in, writes the launcher, registers the self-healing watchdog,
-enables HTTPS Serve, installs the plugin and prints the phone URLs (HTTPS,
-Tailscale IP, and the LAN IP when walk-on-LAN is enabled).
+**Windows users (one-click):** download/extract the repository, then double-click
+**`一键部署.cmd`**. Internet access is required. The installer handles Node,
+Tailscale, a project-owned DSH runtime, profile/plugin setup, launcher,
+watchdog and first start. A Tailscale/UAC prompt is the only intentional human
+step. `DONE` is printed only after the local Harness and plugin route pass a
+live health check; the printed phone URL is therefore ready to open. HTTPS may
+still require enabling certificates once in the Tailscale admin console.
+
+The floating Orb is the post-install daily surface, not an installer: it shows
+agent health and starts at login, while deployment/repair remains transactional
+and visible in `install.ps1`.
 
 ### First use on the phone (pairing)
 
@@ -243,7 +258,7 @@ tight), a compromised host, or a compromised Tailscale account. Details in
 
 - OPPO Find X8 Ultra (real hardware).
 - Emulated matrix: iPhone 16 Pro/SE, Pixel 8, Galaxy S24, Redmi Note, iPad Air,
-  iPhone landscape — sidebar collapse, floating ball, panel width, no overflow.
+  iPhone landscape — sidebar collapse, Task Board action, panel width, no overflow.
   See `docs/device-tests/`.
 
 ## Roadmap

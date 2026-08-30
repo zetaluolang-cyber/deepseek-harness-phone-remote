@@ -27,6 +27,9 @@ test('presence api v1: version and engine are frozen', () => {
     TASKS: 'presence.tasks',
     PUSH_SUBSCRIBE: 'push.subscribe',
     PUSH_UNSUBSCRIBE: 'push.unsubscribe',
+    // push.test added 2026-08 — the freeze allows ADDING operations; this
+    // literal exists so an addition is always a deliberate test change.
+    PUSH_TEST: 'push.test',
   })
   assert.deepEqual(Object.keys(API_OPS).sort(), Object.keys(PRESENCE_OPS).sort(),
     'api.js operations must mirror contract PRESENCE_OPS')

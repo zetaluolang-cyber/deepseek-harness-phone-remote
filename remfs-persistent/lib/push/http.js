@@ -4,6 +4,7 @@
 //   GET /remfs-presence.json     → { ok, value:{ tasks, orb } }  (widget)
 //   GET /remfs-sw.js             → service worker script         (phone)
 //   GET /remfs-push-vapid.json   → { publicKey }                 (phone)
+import { timingSafeEqual } from 'node:crypto'
 
 function send(res, status, body, contentType, extraHeaders = {}) {
   const buf = Buffer.isBuffer(body) ? body : Buffer.from(String(body), 'utf8')
@@ -28,11 +29,23 @@ export function sendJson(res, status, obj) {
  * @param {() => Promise<any>} deps.tasks - presence.tasks() (or a wrapper).
  * @param {(deviceId: string, credential: string) => Promise<{error?: string}>} deps.verifyDevice
  * @param {boolean} deps.pocketStrict - when true, presence.json requires a valid device.
+ * @param {() => Promise<string>} deps.companionToken - local read-only token.
  * @param {() => Promise<{publicKeyB64: string}>} deps.vapidPublic
  * @param {string} deps.swSource - the service worker script text.
  */
 export function createHttpHandlers(deps) {
-  const { tasks, verifyDevice, pocketStrict, vapidPublic, swSource } = deps
+  const { tasks, verifyDevice, pocketStrict, companionToken, vapidPublic, swSource } = deps
+
+  async function hasValidCompanionToken(req) {
+    try {
+      const supplied = String(req.headers['x-remfs-companion-token'] || '').trim().toLowerCase()
+      const expected = String(await companionToken()).trim().toLowerCase()
+      if (!/^[a-f0-9]{64}$/.test(supplied) || !/^[a-f0-9]{64}$/.test(expected)) return false
+      return timingSafeEqual(Buffer.from(supplied, 'hex'), Buffer.from(expected, 'hex'))
+    } catch {
+      return false
+    }
+  }
 
   async function handlePresenceJson(req, res) {
     if ((req.method || 'GET').toUpperCase() !== 'GET') {
@@ -40,12 +53,15 @@ export function createHttpHandlers(deps) {
       return
     }
     if (pocketStrict) {
-      const deviceId = String(req.headers['x-remfs-device-id'] || '')
-      const credential = String(req.headers['x-remfs-credential'] || '')
-      const auth = await verifyDevice(deviceId, credential)
-      if (auth.error) {
-        sendJson(res, 403, { ok: false, error: { code: 'auth-invalid', message: 'device authentication failed', details: {} } })
-        return
+      const localCompanion = await hasValidCompanionToken(req)
+      if (!localCompanion) {
+        const deviceId = String(req.headers['x-remfs-device-id'] || '')
+        const credential = String(req.headers['x-remfs-credential'] || '')
+        const auth = await verifyDevice(deviceId, credential)
+        if (auth.error) {
+          sendJson(res, 403, { ok: false, error: { code: 'auth-invalid', message: 'device authentication failed', details: {} } })
+          return
+        }
       }
     }
     try {

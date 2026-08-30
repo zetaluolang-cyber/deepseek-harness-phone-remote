@@ -29,6 +29,7 @@ export const API_OPS = Object.freeze({
   TASKS: 'presence.tasks',
   PUSH_SUBSCRIBE: 'push.subscribe',
   PUSH_UNSUBSCRIBE: 'push.unsubscribe',
+  PUSH_TEST: 'push.test', // added 2026-08 (freeze policy allows adding operations)
 })
 
 /** Frozen error-code vocabulary. Every error a consumer can receive is here. */

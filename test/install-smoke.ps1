@@ -25,7 +25,7 @@ if ($null -eq $pj.files -or $pj.files -notcontains "lib") {
 
 # 3) install.ps1 copies the whole lib dir (Recurse), never a per-file list
 $install = Get-Content (Join-Path $root "install.ps1") -Raw
-if ($install -match 'Copy-Item\s+\(Join-Path\s+\$pkgSrc\s+"lib"\)\s+\(Join-Path\s+\$pkgDst\s+"lib"\)\s+-Recurse') {
+if ($install -match 'Copy-Item\s+\(Join-Path\s+\$pkgSrc\s+"lib\\\*"\)\s+\(Join-Path\s+\$pkgDst\s+"lib"\)\s+-Recurse') {
     # ok
 } else {
     Write-Error "install.ps1 must copy the whole lib dir (Copy-Item ... lib ... -Recurse)"
@@ -71,36 +71,46 @@ if ($install -notmatch '(?s)if \(\$tsName -match ''\\\.ts\\\.net\$''\) \{.*?http
 }
 Write-Host "install smoke: OK (phone URL guarded, no blank https://)"
 
-# 6) 65c52ca audit item 5: install.ps1 must resolve the dsh entry
-#    DETERMINISTICALLY (highest version across every npx cache entry, never
-#    the first arbitrary one), record the actual version into the launcher,
-#    and the launcher message must use the official package name.
-if ($install -notmatch 'Get-DshCandidates|Get-VersionKey') {
-    Write-Error "install.ps1 must compare dsh versions across all cache entries (deterministic resolution)"
+# 6) A clean install must own a deterministic DSH runtime. Never depend on an
+#    incidental npx cache, and generate the launcher before its shortcut.
+if ($install -notmatch 'runtime.*node_modules\\@deepseek-ai\\dsh' -or
+    $install -notmatch 'npm install --prefix \$runtimeDir' -or
+    $install -notmatch '@deepseek-ai/dsh@latest') {
+    Write-Error "install.ps1 must install a private DeepSeek Harness runtime"
+    exit 1
+}
+if ($install -match 'npm-cache\\_npx|Get-DshCandidates') {
+    Write-Error "install.ps1 must not depend on the npx cache"
     exit 1
 }
 if ($install -notmatch '\$dshVersion' -or $install -notmatch '__DSHVERSION__') {
-    Write-Error "install.ps1 must record the resolved dsh version into start_harness.ps1 (__DSHVERSION__)"
+    Write-Error "install.ps1 must record the installed dsh version into start_harness.ps1"
     exit 1
 }
-if ($install -match 'foreach \(\$c in \$candidates\).*break') {
-    Write-Error "install.ps1 must NOT stop at the first arbitrary dsh entry"
+$launcherWrite = $install.IndexOf('[System.IO.File]::WriteAllText($launcherPs1')
+$shortcutCreate = $install.IndexOf('$wsShell.CreateShortcut($lnkPath)')
+if ($launcherWrite -lt 0 -or $shortcutCreate -lt 0 -or $launcherWrite -gt $shortcutCreate) {
+    Write-Error "installer must write start_harness.ps1 before creating its shortcut"
     exit 1
 }
 $tpl = Get-Content (Join-Path $root "start_harness.template.ps1") -Raw
-if ($tpl -notmatch '__DSHVERSION__') {
-    Write-Error "start_harness.template.ps1 must declare a __DSHVERSION__ placeholder"
+if ($tpl -notmatch '__DSHVERSION__' -or $tpl -notmatch '__NODEBIN__') {
+    Write-Error "launcher template must declare DSH version and Node path placeholders"
     exit 1
 }
-if ($tpl -match 'npx dsh web') {
-    Write-Error "launcher message must use the official 'npx @deepseek-ai/dsh web' (found bare 'npx dsh web')"
+if ($tpl -match 'npx cache|npm-cache|npx @deepseek-ai') {
+    Write-Error "launcher must not tell users to repair an incidental npx cache"
     exit 1
 }
-if ($tpl -notmatch 'npx @deepseek-ai/dsh web') {
-    Write-Error "launcher message must reference the official package '@deepseek-ai/dsh'"
+Write-Host "install smoke: OK (private DSH runtime, launcher-before-shortcut ordering)"
+
+$oneClickPath = (Get-ChildItem -LiteralPath $root -Filter *.cmd | Select-Object -First 1).FullName
+$oneClick = Get-Content -LiteralPath $oneClickPath -Raw
+if ($oneClick -notmatch 'if errorlevel 1' -or $oneClick -notmatch 'exit /b 1') {
+    Write-Error "one-click CMD must preserve install.ps1 failure instead of printing success"
     exit 1
 }
-Write-Host "install smoke: OK (deterministic dsh version resolution, official package message)"
+Write-Host "install smoke: OK (one-click CMD propagates failure)"
 
 # 7) b3dfc4b audit item 1 (P0): install.ps1 must write the FOUR-service inject
 #    row the host half requires, through the SHARED Set-RemfsPatchRow helper

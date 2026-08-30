@@ -115,46 +115,27 @@ test('client source: cockpit UI is fully removed', () => {
   assert.match(CLIENT_SRC, /WorkbenchToggle/, 'client keeps the workbench entry (Files/Sessions)')
 })
 
-// Agent Presence Phase B: Orb + Task Board + notifications consume ONLY the
-// presence DTOs (single source of truth, design §25); Open uses sessions.open.
-test('client source: presence Orb consumes presence.tasks and opens via sessions.open', () => {
-  assert.match(CLIENT_SRC, /presence\.tasks/, 'Orb must fetch the presence task snapshot')
-  assert.match(CLIENT_SRC, /PresenceOrb/, 'client must render the presence Orb')
+// The desktop companion owns ambient presence. The browser keeps the useful
+// Task Board, but exposes it as a normal header action instead of covering the
+// Harness UI with a second floating ball.
+test('client source: Task Board stays available and opens existing sessions', () => {
+  assert.match(CLIENT_SRC, /presence\.tasks/, 'Task Board must fetch the presence task snapshot')
   assert.match(CLIENT_SRC, /PresenceBoard/, 'client must render the Task Board')
+  assert.match(CLIENT_SRC, /PresenceBoardToggle/, 'Task Board needs a compact header entry')
+  assert.match(CLIENT_SRC, /remfs\.presence\.tasks/, 'Task Board header entry must be registered')
+  assert.match(CLIENT_SRC, /counts\.needsUser/, 'Task Board header must use the actual needsUser group key')
+  assert.doesNotMatch(CLIENT_SRC, /counts\.needsYou/, 'Task Board must not render an undefined count')
   assert.match(CLIENT_SRC, /sessionsApi\.open\(|sessionsApi && typeof sessionsApi\.open/,
-    'Orb/Board Open must enter the EXISTING session via sessions.open')
-  const orbBlock = CLIENT_SRC.slice(CLIENT_SRC.indexOf('function PresenceOrb'))
-  assert.doesNotMatch(orbBlock, /fork\(|create\(/, 'Orb/Board must never create a replacement session')
+    'Task Board Open must enter the EXISTING session via sessions.open')
+  const boardBlock = CLIENT_SRC.slice(CLIENT_SRC.indexOf('function PresenceBoard'))
+  assert.doesNotMatch(boardBlock, /fork\(|create\(/, 'Task Board must never create a replacement session')
 })
 
-test('client source: Orb is a floating ball - shell.overlay, fixed, draggable, icon+tag+accent', () => {
-  // design §10-11: ambient floating indicator over the page, not a header item
-  const overlaySection = CLIENT_SRC.slice(CLIENT_SRC.indexOf('shell.overlay'))
-  assert.match(overlaySection, /remfs\.presence\.orb/, 'Orb must register in shell.overlay (page-level, not header)')
-  const orbBlock = CLIENT_SRC.slice(CLIENT_SRC.indexOf('function PresenceOrb'))
-  assert.match(orbBlock, /remfs-orbwrap/, 'Orb must render a floating ball wrapper')
-  assert.match(orbBlock, /setPointerCapture/, 'Orb must be draggable via pointer capture')
-  assert.match(orbBlock, /onPointerMove/, 'drag must track pointer movement')
-  assert.match(orbBlock, /draggedRef\.current/, 'drag must be distinguishable from click')
-  assert.match(CLIENT_SRC, /\.remfs-orbwrap\{position:fixed/, 'ball CSS must float over the page')
-  assert.match(CLIENT_SRC, /remfs-orb-tag/, 'ball keeps a text tag (icon+text, never color-only)')
-  assert.match(orbBlock, /borderColor:\s*orb\.color/, 'ball accent ring must come from orbState.color')
-  // brand-whale logo face (user-requested: no more dark plain ball)
-  assert.match(orbBlock, /WHALE_LOGO_PATH/, 'ball face must be the brand whale logo')
-  assert.match(orbBlock, /remfs-orb-logo/, 'whale logo must render inside the ball')
-  assert.match(orbBlock, /remfs-orb-badge/, 'state icon must live in a corner badge')
-  assert.match(CLIENT_SRC, /linear-gradient\(145deg/, 'ball must be a bright gradient, not a dark disc')
-})
-
-test('client source: notification rules - NEEDS_USER/FAILED only, never RUNNING; click opens the session', () => {
-  assert.match(CLIENT_SRC, /P_NOTIFY_DEFAULT/, 'client must define notification defaults')
-  assert.match(CLIENT_SRC, /\[P_NEEDS\]:\s*true/, 'NEEDS_USER must notify')
-  assert.match(CLIENT_SRC, /\[P_FAILED\]:\s*true/, 'FAILED must notify')
-  assert.match(CLIENT_SRC, /\[P_RUNNING\]:\s*false/, 'RUNNING must never notify')
-  assert.match(CLIENT_SRC, /\[P_STALE\]:\s*false/, 'STALE must not interrupt by default')
-  assert.match(CLIENT_SRC, /new Notification\(/, 'client must use the Notification API')
-  assert.match(CLIENT_SRC, /sessionsApi\.open\(task\.sessionId\)|__remfsSessionsApi\.open\(task\.sessionId\)/,
-    'notification click must open the corresponding session directly')
+test('client source: browser floating ball is not registered or styled', () => {
+  assert.doesNotMatch(CLIENT_SRC, /id:\s*'remfs\.presence\.orb'/,
+    'desktop companion is the only ambient presence surface')
+  assert.doesNotMatch(CLIENT_SRC, /\.remfs-orbwrap\{position:fixed/,
+    'browser must not reserve fixed overlay space for a floating ball')
 })
 
 test('client source: revoke sends targetDeviceId (never { id })', () => {

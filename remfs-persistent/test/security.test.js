@@ -11,6 +11,7 @@ import {
   revokeDevice, revokeAllDevices, parsePairingCode, formatPairingCode,
   securityFile, buildCrumbs, deviceHasCapability, readRemfsOptions,
   safeEqualHex, normalizeDeviceCapabilities, LASTSEEN_PERSIST_MS,
+  ensureCompanionToken,
 } from '../lib/security.js'
 
 const DOCS = path.join(os.homedir(), 'Documents')
@@ -78,6 +79,20 @@ test('protected credential access is denied', () => {
     'C:\\Users\\zeta\\Documents\\KingsoftData\\x',
   ]) {
     assert.equal(deniedPath(p, wp), true, 'should be denied: ' + p)
+  }
+})
+
+test('desktop companion token is stable and hard-denied from remote files', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'remfs-companion-'))
+  const file = path.join(dir, 'remfs-companion-token')
+  try {
+    const first = await ensureCompanionToken(file)
+    const second = await ensureCompanionToken(file)
+    assert.match(first, /^[a-f0-9]{64}$/)
+    assert.equal(second, first)
+    assert.equal(segmentsDenied(file), true)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
   }
 })
 

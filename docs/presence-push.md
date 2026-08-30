@@ -1,9 +1,9 @@
 # Web Push Notifications (phone, page closed)
 
-The in-page Orb only lives inside the harness page. For the phone to get
-"Needs you / Failed" (and optionally "Done") **with the page closed**, the
-plugin adds a standards Web Push path. Everything here is opt-in and
-device-authenticated.
+The Task Board only lives inside the harness page, while the desktop companion
+only lives on the PC. For the phone to get "Needs you / Failed" (and optionally
+"Done") **with the page closed**, the plugin adds a standards Web Push path.
+Everything here is opt-in and device-authenticated.
 
 ## How it works
 
@@ -78,10 +78,10 @@ Implemented from scratch in `lib/push/` with **zero npm dependencies**
 - `~/.dsh/remfs-push.json` contains the VAPID private key — same protection
   expectations as `remfs-security.json` (user-profile file, never in the
   repo).
-- The read-only `/remfs-presence.json` route serves the same DTOs the Orb
-  already shows unauthenticated inside the browser-trust fence; with
-  `pocketStrict: true` it requires device headers
-  (`x-remfs-device-id` / `x-remfs-credential`).
+- The read-only `/remfs-presence.json` route serves the desktop companion's
+  task DTOs. With `pocketStrict: true` it accepts either paired-device headers
+  (`x-remfs-device-id` / `x-remfs-credential`) or the companion's separate
+  local read-only token. The token file is hard-denied by `/remfs`.
 
 ## Operator switches (`~/.dsh/remfs-options.json`)
 
@@ -109,6 +109,17 @@ Implemented from scratch in `lib/push/` with **zero npm dependencies**
   PWA ("Add to Home Screen"); the harness page must be served over HTTPS
   (Tailscale HTTPS qualifies).
 - **Desktop**: browsers show these as OS notifications.
+- **Mainland-China networks (the honest part)**: even with GMS present,
+  delivery rides the browser vendor's push service — Chrome uses FCM
+  (`fcm.googleapis.com`, plus the phone's long-lived FCM connection), which is
+  generally **unreachable from mainland networks**. Tailscale does NOT help by
+  default: the push endpoint is chosen by the browser and that traffic does
+  not route through the tailnet. Workarounds, in order of practicality:
+  set a Tailscale **exit node** on the phone (full-tunnel routes the FCM
+  connection through the exit node's network), or accept in-page
+  notifications + the PC orb/toast as the alert path. Use **Devices →
+  Test push** to find out which world you are in — a dead push channel is
+  otherwise indistinguishable from "no events".
 
 ## Troubleshooting
 

@@ -3,15 +3,16 @@
 # phone-access forwarder are running, then open the browser.
 # If they are already running, just open the browser.
 #
-# All ASCII on purpose: Windows PowerShell 5.1 mis-decodes UTF-8 no-BOM scripts.
-# Placeholders __TSIP__, __TSNAME__, __WORKSPACE__, __DSHBIN__ and
+# The template is ASCII; install.ps1 writes the generated launcher as UTF-8 BOM
+# so Windows PowerShell 5.1 also handles non-ASCII user/profile paths.
+# Placeholders __NODEBIN__, __TSIP__, __TSNAME__, __WORKSPACE__, __DSHBIN__ and
 # __DSHVERSION__ are filled by install.ps1.
 
 $ErrorActionPreference = "Continue"
 
 $url = "http://127.0.0.1:3080"
 $workspace = "__WORKSPACE__"
-$node = "C:\Program Files\nodejs\node.exe"
+$node = "__NODEBIN__"
 $dshBin = "__DSHBIN__"
 $dshVersion = "__DSHVERSION__"
 $logDir = Join-Path $env:USERPROFILE ".dsh\launcher"
@@ -79,7 +80,7 @@ if (-not (Test-Path $node)) {
 }
 if (-not (Test-Path $dshBin)) {
     Add-Type -AssemblyName System.Windows.Forms
-    [System.Windows.Forms.MessageBox]::Show("dsh not found: $dshBin`nRe-run: npx @deepseek-ai/dsh web once to restore the cache.", "DeepSeek Harness")
+    [System.Windows.Forms.MessageBox]::Show("Managed dsh runtime not found: $dshBin`nRe-run the one-click installer to repair it.", "DeepSeek Harness")
     exit 1
 }
 
@@ -214,19 +215,6 @@ if ($ready -and -not $keepAwakeAlive -and (Test-Path $keepAwakeBin)) {
         -RedirectStandardError $kErr | Out-Null
 }
 
-# Unattended restarts (DSH_HEADLESS=1, set by restart_harness_once.ps1) never
-# open a browser or a modal dialog: a stuck "Open with" chooser or MessageBox
-# would block the restart chain itself (Task Scheduler waits for the script).
-if ($env:DSH_HEADLESS -eq "1") {
-    Write-Host "Headless mode: UI is at $url (browser not opened)"
-} else {
-    Start-Process $url
-}
-
-if ($lanIP) {
-    Write-Host "Walk-on-LAN (same Wi-Fi): http://$lanIP`:3080"
-}
-
 if (-not $ready) {
     if ($env:DSH_HEADLESS -eq "1") {
         Write-Host "WARNING: harness did not become ready (headless; logs in $logDir)"
@@ -239,4 +227,18 @@ if (-not $ready) {
             "DeepSeek Harness"
         )
     }
+    exit 1
 }
+
+# Unattended restarts (DSH_HEADLESS=1, set by restart_harness_once.ps1) never
+# open a browser or a modal dialog. Do this only after readiness is proven.
+if ($env:DSH_HEADLESS -eq "1") {
+    Write-Host "Headless mode: UI is at $url (browser not opened)"
+} else {
+    Start-Process $url
+}
+
+if ($lanIP) {
+    Write-Host "Walk-on-LAN (same Wi-Fi): http://$lanIP`:3080"
+}
+exit 0

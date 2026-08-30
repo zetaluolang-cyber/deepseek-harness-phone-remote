@@ -8,12 +8,13 @@
 // safe workspace-root resolution depends on them at apply time - relying on
 // accidental plugin ordering would make the fail-closed root resolution
 // nondeterministic.
-import { ensurePairingCode, rotatePairingCode, verifyDevice, readRemfsOptions, listDevices } from './security.js'
+import { ensurePairingCode, rotatePairingCode, verifyDevice, readRemfsOptions, listDevices, ensureCompanionToken } from './security.js'
 import { createDispatcher } from './dispatch.js'
 import { createPresenceService } from './presence/service.js'
 import { createPocketHandler } from './presence/pocket.js'
 import { createPushStore, normalizeSubscription } from './push/store.js'
 import { createPushController } from './push/controller.js'
+import { sendPush } from './push/webpush.js'
 import { createHttpHandlers } from './push/http.js'
 import { SERVICE_WORKER_SOURCE } from './push/sw.js'
 import { access, readdir, stat, unlink } from 'node:fs/promises'
@@ -183,10 +184,12 @@ export default {
     const pocketErr = (code, message) => ({ ok: false, error: { code, message, details: {} } })
 
     // Operator switch (~/.dsh/remfs-options.json, read once at apply time):
-    // pocketStrict:true requires a VALID device credential for the read-only
-    // presence ops too (the Orb/Board no longer work unauthenticated). Default
-    // (no file / false) keeps the read-only fence for the PC browser.
+    // pocketStrict:true requires a VALID device credential for browser
+    // presence ops. The PC companion uses a separate local read-only token, so
+    // strict mode does not disable the daily desktop status surface.
     const remfsOptions = readRemfsOptions()
+    const companionToken = ensureCompanionToken()
+    companionToken.catch((e) => console.log('[remfs-persistent] companion token unavailable: ' + String((e && e.message) || e)))
 
     // The /pocket dispatcher itself lives in presence/pocket.js so its
     // authorization rules (read-only fence, pocketStrict, the files gate on
@@ -201,9 +204,16 @@ export default {
     // The VAPID keypair + subscriptions + dedupe map live in
     // ~/.dsh/remfs-push.json (never in the repo).
     const pushStore = createPushStore({})
+    // "Valid" for push purposes = still paired AND still holds `files` (the
+    // capability that gates subscribing). Without the capability check, a
+    // device narrowed after subscribing would keep receiving task titles
+    // forever — the gate would only stop NEW subscriptions. With it, the
+    // controller's prune cycle drops narrowed devices' subscriptions within
+    // a minute, the same guarantee revocation already has.
     const isDeviceValid = async (deviceId) => {
       try {
-        return (await listDevices()).some((d) => String(d.id) === String(deviceId))
+        return (await listDevices()).some((d) =>
+          String(d.id) === String(deviceId) && deviceHasCapability(d, 'files'))
       } catch { return false }
     }
     const pushSubscribe = async (device, payload) => {
@@ -225,12 +235,48 @@ export default {
         return pocketErr('store-write-failed', 'push.unsubscribe: ' + String((e && e.message) || e))
       }
     }
+    // push.test: send an immediate test notification to the CALLER's own
+    // subscriptions and report per-endpoint results. A dead push channel is
+    // indistinguishable from "no events" — this makes it checkable at setup
+    // time. Content is a fixed localized string (no task data), but the op is
+    // still `files`-gated like subscribe so a narrowed device cannot probe.
+    const pushTest = async (device, payload) => {
+      try {
+        const subs = (await pushStore.subscriptions()).filter((s) => String(s.deviceId) === String(device.id))
+        if (subs.length === 0) {
+          return pocketErr('bad-request', 'push.test: no subscription for this device — enable push first')
+        }
+        const vapid = await pushStore.ensureVapid()
+        const subject = await pushStore.subjectOf()
+        const zh = String((payload && payload.lang) || subs[0].lang || 'zh') !== 'en'
+        const body = JSON.stringify({
+          title: zh ? '测试推送 ✓' : 'Test push ✓',
+          body: zh ? '通道畅通 — DSH Phone Remote' : 'Push channel works — DSH Phone Remote',
+          tag: 'remfs-push-test',
+          url: '/',
+        })
+        const results = []
+        for (const sub of subs) {
+          const r = await sendPush({
+            endpoint: sub.endpoint, keys: sub.keys, payload: Buffer.from(body, 'utf8'),
+            vapid, subject, extra: { ttlSeconds: 300, urgency: 'high' },
+          })
+          if (r.status === 'gone') { try { await pushStore.removeSubscription(device.id, sub.endpoint) } catch { /* ignore */ } }
+          results.push({ endpoint: sub.endpoint, status: r.status, httpStatus: r.httpStatus || null, error: r.error ? String(r.error) : null })
+        }
+        return { ok: true, value: { sent: results.filter((x) => x.status === 'sent').length, results } }
+      } catch (e) {
+        return pocketErr('store-write-failed', 'push.test: ' + String((e && e.message) || e))
+      }
+    }
+
     const pocketHandler = createPocketHandler({
       presence,
       verifyDevice,
       pocketStrict: remfsOptions.pocketStrict,
       pushSubscribe,
       pushUnsubscribe,
+      pushTest,
     })
 
     const pushController = createPushController({
@@ -263,6 +309,7 @@ export default {
         },
         verifyDevice,
         pocketStrict: remfsOptions.pocketStrict,
+        companionToken: () => companionToken,
         vapidPublic: () => pushStore.vapidPublic(),
         swSource: SERVICE_WORKER_SOURCE,
       })
