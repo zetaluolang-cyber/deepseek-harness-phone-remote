@@ -245,7 +245,7 @@ window.__ModuleLoader__.load({
         devicesTitle: '已配对设备', revokeBtn: '吊销', revokeAllBtn: '吊销全部',
         revokedToast: '✅ 已吊销', noDevices: '暂无设备', devMgmt: '🔐 设备管理',
         pushToggle: '推送通知(关页面也能收到「需要你」)', pushUnsupported: '需 HTTPS(localhost 或 Tailscale HTTPS)', pushEnableErr: '推送不可用,请确认已连接 Tailscale HTTPS',
-        pushHint: '关页面也能收到「需要你 / 失败」提醒', pushAskTitle: '开启推送通知?', pushAskHint: '关闭页面也能收到重要提醒', pushAskYes: '开启', pushAskLater: '稍后', pushOn: '已开启', pushOff: '开启',
+        pushHint: '关页面也能收到「需要你 / 失败」提醒', pushAskTitle: '开启推送通知?', pushAskHint: '关闭页面也能收到重要提醒', pushAskYes: '开启', pushAskLater: '稍后', pushOn: '已开启', pushOff: '开启', pushOnToast: '✅ 推送已订阅',
         pushTestBtn: '测试推送', pushTestOk: '✅ 已发送 — 请留意手机通知;收不到多为推送服务(如 FCM)不可达', pushTestFail: '❌ 推送发送失败', pushTestNone: '请先开启推送开关',
         rootOutside: '新增目录必须在已批准目录内——在电脑上编辑 .remfs-roots.json 添加新位置',
         authFailed: '设备未授权,请重新配对', capDenied: '此设备没有执行该操作所需的权限',
@@ -288,7 +288,7 @@ window.__ModuleLoader__.load({
         devicesTitle: 'Paired devices', revokeBtn: 'Revoke', revokeAllBtn: 'Revoke all',
         revokedToast: '✅ Revoked', noDevices: 'No devices', devMgmt: '🔐 Devices',
         pushToggle: 'Push notifications (get "needs you" with the page closed)', pushUnsupported: 'needs HTTPS (localhost or Tailscale HTTPS)', pushEnableErr: 'Push unavailable — check you are on Tailscale HTTPS',
-        pushHint: 'Get "needs you / failed" alerts with the page closed', pushAskTitle: 'Enable push notifications?', pushAskHint: 'Important alerts arrive even with the page closed', pushAskYes: 'Enable', pushAskLater: 'Later', pushOn: 'On', pushOff: 'Enable',
+        pushHint: 'Get "needs you / failed" alerts with the page closed', pushAskTitle: 'Enable push notifications?', pushAskHint: 'Important alerts arrive even with the page closed', pushAskYes: 'Enable', pushAskLater: 'Later', pushOn: 'On', pushOff: 'Enable', pushOnToast: '✅ Push subscribed',
         pushTestBtn: 'Test push', pushTestOk: '✅ Sent — watch for the notification; if none arrives the push service (e.g. FCM) is unreachable', pushTestFail: '❌ Test push failed', pushTestNone: 'Enable the push toggle first',
         rootOutside: 'New roots must stay inside approved roots — edit .remfs-roots.json on the PC to add new locations',
         authFailed: 'Device not authorized — please pair again', capDenied: 'This device does not have permission for that operation',
@@ -374,27 +374,55 @@ window.__ModuleLoader__.load({
     }
 
     /** Subscribe (or refresh) the push subscription for the CURRENT device. */
+    // Returns a normal RPC envelope, or { ok:false, error:{code,message} }
+    // describing WHY it failed. It used to `return null` on every failure and
+    // the caller tested `if (r && !r.ok)` - so a failed subscribe showed NO
+    // error at all while the toggle still flipped to "on": the UI claimed push
+    // was enabled while the host had no subscription at all. subscribe() is
+    // the one that actually fails in the field (no Google Play services, FCM
+    // unreachable, permission denied), so its real DOMException now reaches
+    // the user instead of being swallowed.
+    const pushFail = (code, message) => ({ ok: false, error: { code, message: String(message || code) } })
     const ensurePushSubscription = async (conn, reg) => {
       const cred = getCred()
-      if (!cred || !reg) return null
+      if (!cred) return pushFail('not-paired', 'device is not paired')
+      if (!reg) return pushFail('no-service-worker', 'service worker not registered')
+      let sub
       try {
-        let sub = await reg.pushManager.getSubscription()
-        if (!sub) {
+        sub = await reg.pushManager.getSubscription()
+      } catch (e) {
+        return pushFail('subscribe-failed', (e && (e.name + ': ' + e.message)) || e)
+      }
+      if (!sub) {
+        let key
+        try {
           const r = await window.fetch('/remfs-push-vapid.json', { cache: 'no-store' }).then((x) => x.json())
-          const key = r && r.ok && r.value && r.value.publicKeyB64
-          if (!key) return null
-          sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(key) })
+          key = r && r.ok && r.value && r.value.publicKeyB64
+        } catch (e) {
+          return pushFail('vapid-unavailable', (e && e.message) || e)
         }
-        const p256dh = sub.getKey('p256dh') ? b64urlFromBytes(sub.getKey('p256dh')) : ''
-        const auth = sub.getKey('auth') ? b64urlFromBytes(sub.getKey('auth')) : ''
-        if (!p256dh || !auth) return null
-        let lang = 'zh'
-        try { lang = window.localStorage.getItem('remfs-lang') === 'en' ? 'en' : 'zh' } catch { /* default zh */ }
-        return conn.rpc.call('/pocket', 'push.subscribe', {
+        if (!key) return pushFail('vapid-unavailable', 'host returned no VAPID public key')
+        try {
+          sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(key) })
+        } catch (e) {
+          // The field failure: AbortError "Registration failed - push service
+          // error" = no GMS / FCM unreachable. NotAllowedError = permission denied.
+          return pushFail('subscribe-failed', (e && (e.name + ': ' + e.message)) || e)
+        }
+      }
+      const p256dh = sub.getKey('p256dh') ? b64urlFromBytes(sub.getKey('p256dh')) : ''
+      const auth = sub.getKey('auth') ? b64urlFromBytes(sub.getKey('auth')) : ''
+      if (!p256dh || !auth) return pushFail('no-keys', 'subscription carried no p256dh/auth keys')
+      let lang = 'zh'
+      try { lang = window.localStorage.getItem('remfs-lang') === 'en' ? 'en' : 'zh' } catch { /* default zh */ }
+      try {
+        return await conn.rpc.call('/pocket', 'push.subscribe', {
           deviceId: cred.deviceId, credential: cred.credential, lang,
           subscription: { endpoint: sub.endpoint, keys: { p256dh, auth } },
         })
-      } catch { return null }
+      } catch (e) {
+        return pushFail('rpc-failed', (e && e.message) || e)
+      }
     }
 
     /** Unsubscribe from push and tell the host to forget the endpoint. */
@@ -722,7 +750,19 @@ window.__ModuleLoader__.load({
       const onTogglePush = (on) => {
         if (on) {
           setPushEnabledFlag(true)
-          const doSubscribe = () => { ensurePushSubscription(conn, pushReg).then((r) => { if (r && !r.ok) showToast(r.error && r.error.code === 'capability-denied' ? t('capDenied') : t('pushEnableErr'), 'error') }) }
+          const doSubscribe = () => {
+            ensurePushSubscription(conn, pushReg).then((r) => {
+              if (r && r.ok) { showToast(t('pushOnToast'), 'success'); forceLang((n) => n + 1); return }
+              // Failure must NOT leave the toggle claiming "on" - that is how a
+              // dead subscription looked enabled while the host had nothing.
+              setPushEnabledFlag(false)
+              const code = (r && r.error && r.error.code) || 'unknown'
+              const msg = (r && r.error && r.error.message) || ''
+              if (code === 'capability-denied') showToast(t('capDenied'), 'error')
+              else showToast(t('pushEnableErr') + ' [' + code + '] ' + msg, 'error')
+              forceLang((n) => n + 1)
+            })
+          }
           if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
             Notification.requestPermission().then((p) => {
               if (p === 'granted') doSubscribe()
@@ -995,7 +1035,7 @@ window.__ModuleLoader__.load({
                 if (r && r.ok && r.value && r.value.sent > 0) showToast(t('pushTestOk'), 'success')
                 else if (r && !r.ok && r.error && r.error.code === 'capability-denied') showToast(t('capDenied'), 'error')
                 else if (r && !r.ok && r.error && /no subscription/i.test(r.error.message || '')) showToast(t('pushTestNone'), 'error')
-                else showToast(t('pushTestFail'), 'error')
+                else showToast(t('pushTestFail') + (r && r.error ? ' [' + r.error.code + '] ' + (r.error.message || '') : ''), 'error')
               }).catch(() => showToast(t('pushTestFail'), 'error'))
             },
           }, t('pushTestBtn')) : null
@@ -1035,7 +1075,7 @@ window.__ModuleLoader__.load({
                   if (r && r.ok && r.value && r.value.sent > 0) showToast(t('pushTestOk'), 'success')
                   else if (r && !r.ok && r.error && r.error.code === 'capability-denied') showToast(t('capDenied'), 'error')
                   else if (r && !r.ok && r.error && /no subscription/i.test(r.error.message || '')) showToast(t('pushTestNone'), 'error')
-                  else showToast(t('pushTestFail'), 'error')
+                  else showToast(t('pushTestFail') + (r && r.error ? ' [' + r.error.code + '] ' + (r.error.message || '') : ''), 'error')
                 }).catch(() => showToast(t('pushTestFail'), 'error'))
               } }, t('pushTestBtn')) : null
             )
