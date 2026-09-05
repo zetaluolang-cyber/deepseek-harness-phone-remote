@@ -150,5 +150,42 @@ export async function sendPush(opts) {
   return { status: 'failed', httpStatus: res.status, error: 'http ' + res.status }
 }
 
+/**
+ * Lightweight host-side reachability probe of a push endpoint ORIGIN, used at
+ * subscribe time (1.4). Sends an OPTIONS request to the origin with a short
+ * timeout; ANY HTTP answer (even 403/405) proves the push service is reachable
+ * from the host. The probe NEVER blocks the subscribe — a negative result is
+ * surfaced as a `reachabilityWarning` on the response so the client can warn
+ * the user (FCM can be unreachable from some networks while the endpoint is
+ * still perfectly valid for the phone's push service to deliver).
+ * @param {string} endpoint - the subscription endpoint URL.
+ * @param {Object} [opts] - { fetchImpl = globalThis.fetch, timeoutMs = 4000 }.
+ * @returns {Promise<{ reachable: boolean, reason?: string }>}
+ */
+export async function probeEndpointOrigin(endpoint, opts = {}) {
+  const fetchImpl = opts.fetchImpl || globalThis.fetch
+  const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 4000
+  let origin
+  try {
+    origin = originOf(endpoint)
+  } catch (e) {
+    return { reachable: false, reason: 'invalid endpoint URL: ' + String((e && e.message) || e) }
+  }
+  try {
+    await fetchImpl(origin, {
+      method: 'OPTIONS',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    return { reachable: true }
+  } catch (e) {
+    const code = String((e && e.name) || '')
+    const reason = code === 'TimeoutError' || /timeout/i.test(String((e && e.message) || e))
+      ? 'origin timed out after ' + timeoutMs + 'ms'
+      : String((e && e.message) || e)
+    return { reachable: false, reason }
+  }
+}
+
 /** Compact base64url key for embedding in JS/JSON (re-export for callers). */
 export { base64url, fromBase64url, originOf }

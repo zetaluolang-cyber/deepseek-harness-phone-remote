@@ -5,8 +5,13 @@
 //     version: 1,
 //     vapid:    { publicKeyB64, privateKeyPem, createdAt },  // generated once
 //     subject:  'mailto:...' (operator-set),
-//     subscriptions: [{ deviceId, lang, endpoint, keys:{p256dh,auth}, createdAt }],
-//     pushed:   { '<sessionId>:<STATE>': epochMs }           // dedupe, pruned
+//     subscriptions: [{
+//       deviceId, lang, endpoint, keys:{p256dh,auth}, createdAt,
+//       lastDeliveredAt,   // epoch ms of the last successful delivery (null)
+//       lastError,         // string|null of the last failed send attempt
+//       lastErrorAt,       // epoch ms of that failure (null)
+//     }],
+//     pushed:   { '<sessionId>:<STATE>:<turnCycle>': epochMs }  // dedupe, pruned
 //   }
 //
 // Writes are atomic (temp file + rename). A corrupt file is moved aside to
@@ -15,7 +20,7 @@
 import { readFile, writeFile, rename, mkdir, access } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { generateVapidKeys } from './vapid.js'
+import { generateVapidKeys, originOf } from './vapid.js'
 
 export const pushFile = () => path.join(os.homedir(), '.dsh', 'remfs-push.json')
 
@@ -31,6 +36,85 @@ export function normalizeSubscription(raw) {
   if (!/^https?:\/\//.test(endpoint)) return null
   if (!p256dh || !auth) return null
   return { endpoint, keys: { p256dh, auth } }
+}
+
+// Push providers the host is allowed to reach. Subscription endpoints are
+// fetched BY THE HOST (SSRF + task-content exfiltration surface), so only
+// well-known https push services are accepted — everything else is rejected at
+// subscribe time with the frozen 'bad-request' code. Operators may extend the
+// list via ~/.dsh/remfs-options.json `pushEndpointAllow` (bare hosts or https
+// origins); matching is an exact hostname compare (no wildcard/subdomain).
+export const KNOWN_PUSH_HOSTS = Object.freeze([
+  'fcm.googleapis.com', // Google / Firebase Cloud Messaging
+  'updates.push.services.mozilla.com', // Mozilla autopush
+  'web.push.apple.com', // Apple Web Push
+])
+
+/** Parse an allowlist entry (https origin or bare host) into a hostname. */
+export function normalizePushAllowEntry(entry) {
+  const s = String(entry || '').trim()
+  if (!s) return null
+  try {
+    const u = /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? new URL(s) : new URL('https://' + s)
+    return u.hostname.toLowerCase() || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Decide whether a subscription endpoint may be stored and fetched by the
+ * host. Accepts ONLY https endpoints whose hostname is a KNOWN_PUSH_HOSTS
+ * entry or an operator extra-allowlist hostname.
+ * @param {string} endpoint - the subscription endpoint URL.
+ * @param {string[]} [extraAllow] - operator extra entries (hosts or origins).
+ * @returns {{ allowed: boolean, reason?: string }}
+ */
+export function allowedPushEndpoint(endpoint, extraAllow = []) {
+  let url
+  try {
+    url = new URL(String(endpoint || ''))
+  } catch {
+    return { allowed: false, reason: 'push.subscribe: endpoint must be a valid https URL' }
+  }
+  if (url.protocol !== 'https:') {
+    return { allowed: false, reason: 'push.subscribe: endpoint must use https (http endpoints are refused)' }
+  }
+  const host = url.hostname.toLowerCase()
+  const extras = (Array.isArray(extraAllow) ? extraAllow : [])
+    .map(normalizePushAllowEntry)
+    .filter(Boolean)
+  if (KNOWN_PUSH_HOSTS.includes(host) || extras.includes(host)) return { allowed: true }
+  return {
+    allowed: false,
+    reason: 'push.subscribe: endpoint origin not on the push-provider allowlist (' + host + ')',
+  }
+}
+
+/** Map store subscriptions to the /pocket push.status value for ONE device
+ *  (owner-scoped: only the calling device's subscriptions are ever returned).
+ *  @param {Array} subscriptions - store.subscriptions().
+ *  @param {string} deviceId - the authenticated caller's device id.
+ *  @returns {Array} [{ endpoint, origin, createdAt, lastDeliveredAt, lastError,
+ *    lastErrorAt }] */
+export function pushStatusForDevice(subscriptions, deviceId) {
+  const list = Array.isArray(subscriptions) ? subscriptions : []
+  const numOrNull = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null)
+  const out = []
+  for (const s of list) {
+    if (!s || String(s.deviceId) !== String(deviceId)) continue
+    let origin = ''
+    try { origin = originOf(s.endpoint) } catch { /* keep '' for malformed rows */ }
+    out.push({
+      endpoint: String(s.endpoint || ''),
+      origin,
+      createdAt: s.createdAt && typeof s.createdAt === 'string' ? s.createdAt : null,
+      lastDeliveredAt: numOrNull(s.lastDeliveredAt),
+      lastError: s.lastError == null ? null : String(s.lastError),
+      lastErrorAt: numOrNull(s.lastErrorAt),
+    })
+  }
+  return out
 }
 
 /**
@@ -139,9 +223,38 @@ export function createPushStore(opts = {}) {
       endpoint: sub.endpoint,
       keys: sub.keys,
       createdAt: new Date().toISOString(),
+      // Delivery health (1.3): stamped by the dispatcher/controller after each
+      // send attempt; a fresh subscription has never been delivered to.
+      lastDeliveredAt: null,
+      lastError: null,
+      lastErrorAt: null,
     }
     if (idx >= 0) d.subscriptions[idx] = entry
     else d.subscriptions.push(entry)
+    await save()
+    return { ok: true }
+  }
+
+  /** Persist one send-attempt outcome on a subscription (matched by endpoint).
+   *  A successful delivery stamps lastDeliveredAt and clears the error fields;
+   *  a failed attempt records lastError/lastErrorAt and leaves the last success
+   *  intact. @param {Object} outcome - { deliveredAt?: number, error?: string,
+   *  errorAt?: number }. */
+  async function recordSendOutcome(endpoint, outcome = {}) {
+    const d = await load()
+    const sub = d.subscriptions.find((s) => s.endpoint === endpoint)
+    if (!sub) return { ok: false, reason: 'no-such-endpoint' }
+    const deliveredAt = Number(outcome.deliveredAt)
+    if (Number.isFinite(deliveredAt) && deliveredAt > 0) {
+      sub.lastDeliveredAt = deliveredAt
+      sub.lastError = null
+      sub.lastErrorAt = null
+    }
+    if (outcome.error != null) {
+      sub.lastError = String(outcome.error)
+      const errorAt = Number(outcome.errorAt)
+      sub.lastErrorAt = Number.isFinite(errorAt) && errorAt > 0 ? errorAt : null
+    }
     await save()
     return { ok: true }
   }
@@ -175,13 +288,14 @@ export function createPushStore(opts = {}) {
     return { removed: before - kept.length }
   }
 
-  /** True when this (sessionId:STATE) has already been pushed. */
+  /** True when this (sessionId:STATE:turnCycle) has already been pushed. */
   async function alreadyPushed(key) {
     const d = await load()
     return Object.prototype.hasOwnProperty.call(d.pushed, key)
   }
 
-  /** Remember a pushed key, pruning entries older than PUSHED_MAX_AGE_MS. */
+  /** Remember a pushed key (now a sessionId:STATE:turnCycle triple), pruning
+   *  entries older than PUSHED_MAX_AGE_MS. */
   async function markPushed(key, now = Date.now()) {
     const d = await load()
     d.pushed[key] = now
@@ -221,6 +335,7 @@ export function createPushStore(opts = {}) {
     pruneRevoked,
     alreadyPushed,
     markPushed,
+    recordSendOutcome,
     subscriptions,
     reload,
     destroy,

@@ -106,6 +106,11 @@ export const PRESENCE_OPS = Object.freeze({
   // an immediate test notification to the CALLER's subscriptions, so a dead
   // push channel is discovered at setup time, not when an agent fails.
   PUSH_TEST: 'push.test',
+  // Added 2026-08 (adding operations is allowed within the v1 freeze): returns
+  // the CALLING device's subscriptions with delivery health (origin, createdAt,
+  // lastDeliveredAt, lastError) so the Devices pane can show push delivery
+  // status per device. Owner-scoped: never another device's subscriptions.
+  PUSH_STATUS: 'push.status',
 })
 
 /**
@@ -123,6 +128,12 @@ export const PRESENCE_OPS = Object.freeze({
  * @property {number} updatedAt
  * @property {Object|null} attention — { kind, summary } when NEEDS_USER
  * @property {Object|null} staleReason — explainable facts when STALE (§42)
+ * @property {number} turnCycle — count of user-role messages seen so far (a
+ *   per-session turn-cycle dimension). ADDED 2026-08 within the v1 freeze:
+ *   notification dedupe keys on sessionId:state:turnCycle, so a repeat
+ *   NEEDS_USER/FAILED after a NEW user message re-notifies while a repeat
+ *   inside the same user turn stays suppressed. Finite, non-negative, 0 when
+ *   the host cannot observe user messages.
  * @property {number} sizeBytes — persisted session dir size on disk (0 when
  *   the host cannot measure it); clients show it and suggest archiving
  *   sessions above 10 MB
@@ -144,6 +155,11 @@ export function makeTaskDTO(parts) {
     updatedAt: Number(p.updatedAt) || 0,
     attention: p.attention || null,
     staleReason: p.staleReason || null,
+    // turnCycle is an ADDED v1 field (see typedef): optional in inputs,
+    // always present in makeTaskDTO output with a stable default of 0.
+    turnCycle: Number.isFinite(Number(p.turnCycle)) && Number(p.turnCycle) >= 0
+      ? Math.floor(Number(p.turnCycle))
+      : 0,
     sizeBytes: Number(p.sizeBytes) || 0,
   }
 }

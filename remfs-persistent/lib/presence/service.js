@@ -139,6 +139,28 @@ export function titleFromEvents(events) {
   return ''
 }
 
+/**
+ * Count user-role messages in a session's events. This is the per-session
+ * "turn cycle" dimension exposed as task DTO field `turnCycle`: a new user
+ * message starts a new cycle, so notification dedupe keyed on
+ * sessionId:state:turnCycle can re-alert after the user re-engages while still
+ * suppressing repeats inside one user turn. Recognizes user/message events and
+ * events whose record carries a user role on data.role / data.message.role.
+ * @param {Array<Object>} events - session events ascending.
+ * @returns {number} count of user-role messages (0 when none observed).
+ */
+export function userTurnCount(events) {
+  let n = 0
+  for (const e of Array.isArray(events) ? events : []) {
+    if (!e) continue
+    if (e.type === 'user/message') { n += 1; continue }
+    const d = e.data || {}
+    const role = d && (d.role || (d.message && d.message.role))
+    if (role === 'user') n += 1
+  }
+  return n
+}
+
 /** First event time (ms epoch; 0 when none). */
 export function firstTime(events) {
   for (const e of events) if (e && Number(e.time)) return Number(e.time)
@@ -312,6 +334,9 @@ export function createPresenceService(ctx, opts = {}) {
         fileChanges: fileChangeCount(events),
         taskTransitions: 0,
       }) : null,
+      // turnCycle = user-role message count so push/browser dedupe can key on
+      // sessionId:state:turnCycle (repeat events re-notify after a new turn).
+      turnCycle: userTurnCount(events),
     })
     return task
   }

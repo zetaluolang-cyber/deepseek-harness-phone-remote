@@ -7,7 +7,8 @@
 //      browser-trust fence UNLESS pocketStrict; everything else auth-invalid.
 //      Unauthenticated TASKS are REDACTED at the boundary (F5): the DTO
 //      structure stays, user content (title/summary) does not.
-//   3. capability             -> push.subscribe/unsubscribe require `files`
+//   3. capability             -> push.subscribe / push.status / push.test
+//      require `files` (unsubscribe is deliberately ungated).
 //
 // Why `files` gates push: a push payload carries the task title and summary —
 // content strictly WEAKER than what the files capability already trusts the
@@ -33,11 +34,12 @@ const pocketErr = (code, message) => ({ ok: false, error: { code, message, detai
  *   pocketStrict:    boolean,
  *   pushSubscribe:   (device, payload) => Promise<envelope>,
  *   pushUnsubscribe: (device, payload) => Promise<envelope>,
+ *   pushStatus:      (device) => Promise<envelope>,
  *   pushTest:        (device, payload) => Promise<envelope>,
  * }
  */
 export function createPocketHandler(deps) {
-  const { presence, verifyDevice, pocketStrict, pushSubscribe, pushUnsubscribe, pushTest } = deps
+  const { presence, verifyDevice, pocketStrict, pushSubscribe, pushUnsubscribe, pushStatus, pushTest } = deps
   return async function pocketHandler(endpoint, payload) {
     const authRes = await verifyDevice(
       payload && payload.deviceId,
@@ -68,14 +70,15 @@ export function createPocketHandler(deps) {
       case PRESENCE_OPS.STATUS: return presence.status(authRes.device)
       case PRESENCE_OPS.TASKS: return presence.tasks()
       case PRESENCE_OPS.PUSH_SUBSCRIBE:
+      case PRESENCE_OPS.PUSH_STATUS:
       case PRESENCE_OPS.PUSH_TEST: {
         if (!deviceHasCapability(authRes.device, 'files')) {
           return pocketErr('capability-denied',
             'push requires the files capability (pushes carry task titles/summaries)')
         }
-        return endpoint === PRESENCE_OPS.PUSH_SUBSCRIBE
-          ? pushSubscribe(authRes.device, payload)
-          : pushTest(authRes.device, payload)
+        if (endpoint === PRESENCE_OPS.PUSH_SUBSCRIBE) return pushSubscribe(authRes.device, payload)
+        if (endpoint === PRESENCE_OPS.PUSH_STATUS) return pushStatus(authRes.device)
+        return pushTest(authRes.device, payload)
       }
       // Unsubscribe is deliberately NOT capability-gated: removing your own
       // subscription only reduces data flow, so it is never a privilege — and

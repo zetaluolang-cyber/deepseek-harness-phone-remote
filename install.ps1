@@ -274,8 +274,9 @@ foreach ($f in @("tailscale_forward.js", "restart_harness.ps1", "restart_harness
 }
 
 # Orb widget (always-on-top presence ball): copied from scripts/ so the
-# double-click launcher (start-orb-widget.cmd) works after deploy.
-foreach ($f in @("orb-widget.ps1", "start-orb-widget.cmd")) {
+# double-click launcher (start-orb-widget.cmd) works after deploy. orb-state.ps1
+# must ride along: the widget dot-sources it and refuses to start without it.
+foreach ($f in @("orb-widget.ps1", "orb-state.ps1", "start-orb-widget.cmd")) {
     $widgetSrc = Join-Path $src "scripts\$f"
     if (Test-Path $widgetSrc) {
         Copy-Item $widgetSrc (Join-Path $scriptDir $f) -Force

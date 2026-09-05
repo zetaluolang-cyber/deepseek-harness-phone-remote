@@ -24,6 +24,32 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# ── pure state-decision module (extracted for testability) ────────────────
+# The poll-to-display decision (task state, stale snapshot cache, 401/403,
+# offline, toast gating) lives in orb-state.ps1 - functions only, no UI. It
+# must sit NEXT TO this script (the repo scripts\ dir and the deployed
+# ~/.dsh\launcher copy both carry it). Fail early and loud: a missing module
+# at logon beats a silently dead orb.
+$orbStateModule = Join-Path $PSScriptRoot 'orb-state.ps1'
+if (-not (Test-Path -LiteralPath $orbStateModule)) {
+  throw 'orb-state.ps1 is missing next to orb-widget.ps1 - re-run install.ps1'
+}
+. $orbStateModule
+
+# ── argument-line quoting helper (Windows PowerShell 5.1) ─────────────────
+# PS 5.1 Start-Process joins an ArgumentList ARRAY into a raw command line
+# with NO quoting, so a spaced path (e.g. C:\Users\My Name\.dsh\...) arrives
+# split into several argv tokens. Wrap every token in exactly one pair of
+# double quotes and join them into ONE argument string, which 5.1 then hands
+# to the child unchanged (same proven style as ConvertTo-ArgLine in
+# start_harness.template.ps1).
+function ConvertTo-ArgLine {
+  param([object[]]$Tokens)
+  $out = @()
+  foreach ($t in $Tokens) { $out += ('"' + [string]$t + '"') }
+  return ($out -join ' ')
+}
+
 # ── single-instance guard (FIRST: before any expensive Add-Type) ────────────
 # A named mutex is atomic. Process-list matching was both racy and dependent on
 # WMI permissions, so two simultaneous Startup launches could still stack.
@@ -162,10 +188,19 @@ function Log([string]$msg) {
 # ── state mapping (mirrors the web Orb / lib/presence/ui.js) ──────────────
 $P_NEEDS = 'NEEDS_USER'; $P_FAILED = 'FAILED'; $P_STALE = 'STALE'; $P_RUNNING = 'RUNNING'
 $P_DONE = 'DONE'; $P_IDLE = 'IDLE'; $P_DISC = 'DISCONNECTED'
-$P_PRIORITY = @{ $P_NEEDS = 0; $P_FAILED = 1; $P_STALE = 2; $P_RUNNING = 3; $P_DONE = 4; $P_IDLE = 5; $P_DISC = 6 }
-$P_COLOR = @{ $P_IDLE = [System.Drawing.Color]::FromArgb(125, 132, 148); $P_RUNNING = [System.Drawing.Color]::FromArgb(74, 108, 247); $P_STALE = [System.Drawing.Color]::FromArgb(245, 158, 11); $P_NEEDS = [System.Drawing.Color]::FromArgb(251, 191, 36); $P_FAILED = [System.Drawing.Color]::FromArgb(239, 68, 68); $P_DONE = [System.Drawing.Color]::FromArgb(34, 197, 94); $P_DISC = [System.Drawing.Color]::FromArgb(156, 163, 175) }
-$P_GLYPH = @{ $P_IDLE = '○'; $P_RUNNING = '●'; $P_STALE = '◐'; $P_NEEDS = '!'; $P_FAILED = '×'; $P_DONE = '✓'; $P_DISC = '?' }
-$P_TEXT = @{ $P_IDLE = '空闲'; $P_RUNNING = '运行中'; $P_STALE = '可能卡住'; $P_NEEDS = '等待你处理'; $P_FAILED = '失败'; $P_DONE = '已完成'; $P_DISC = '未连接' }
+# Virtual transport states (never come from the server; produced by the
+# decision module only): UNAUTHORIZED = 401/403 or a redacted body while we
+# hold a companion token, OFFLINE = transport failure. Both render with the
+# DISCONNECTED silhouette but carry their own labels/tooltips.
+$P_UNAUTH = 'UNAUTHORIZED'; $P_OFFLINE = 'OFFLINE'
+$P_PRIORITY = @{ $P_NEEDS = 0; $P_FAILED = 1; $P_STALE = 2; $P_RUNNING = 3; $P_DONE = 4; $P_IDLE = 5; $P_DISC = 6; $P_UNAUTH = 7; $P_OFFLINE = 7 }
+$P_COLOR = @{ $P_IDLE = [System.Drawing.Color]::FromArgb(125, 132, 148); $P_RUNNING = [System.Drawing.Color]::FromArgb(74, 108, 247); $P_STALE = [System.Drawing.Color]::FromArgb(245, 158, 11); $P_NEEDS = [System.Drawing.Color]::FromArgb(251, 191, 36); $P_FAILED = [System.Drawing.Color]::FromArgb(239, 68, 68); $P_DONE = [System.Drawing.Color]::FromArgb(34, 197, 94); $P_DISC = [System.Drawing.Color]::FromArgb(156, 163, 175); $P_UNAUTH = [System.Drawing.Color]::FromArgb(96, 102, 115); $P_OFFLINE = [System.Drawing.Color]::FromArgb(156, 163, 175) }
+$P_GLYPH = @{ $P_IDLE = '○'; $P_RUNNING = '●'; $P_STALE = '◐'; $P_NEEDS = '!'; $P_FAILED = '×'; $P_DONE = '✓'; $P_DISC = '?'; $P_UNAUTH = '?'; $P_OFFLINE = '?' }
+$P_TEXT = @{ $P_IDLE = '空闲'; $P_RUNNING = '运行中'; $P_STALE = '可能卡住'; $P_NEEDS = '等待你处理'; $P_FAILED = '失败'; $P_DONE = '已完成'; $P_DISC = '未连接'; $P_UNAUTH = '未授权'; $P_OFFLINE = '离线' }
+# States that render calm (no continuous animation). Virtual transport states
+# are as quiet as DISCONNECTED so the orb dims instead of buzzing when the
+# link is broken or refused.
+$P_QUIET = @{ $P_IDLE = $true; $P_DONE = $true; $P_DISC = $true; $P_UNAUTH = $true; $P_OFFLINE = $true }
 
 # ── form ───────────────────────────────────────────────────────────────────
 # DPI-scaled transparent canvas. The visible ball is compact; the larger clear
@@ -300,7 +335,7 @@ $panelOpen.Add_Click({ try { Start-Process $HarnessUrl; $panel.Hide() } catch { 
 $panelRefresh = New-CompanionButton '立即刷新' 136 82
 $panelRefresh.Add_Click({ PollOnce })
 $panelLog = New-CompanionButton '查看日志' 226 86
-$panelLog.Add_Click({ try { Start-Process -FilePath 'notepad.exe' -ArgumentList @($logFile) } catch { } })
+$panelLog.Add_Click({ try { Start-Process -FilePath 'notepad.exe' -ArgumentList (ConvertTo-ArgLine @($logFile)) } catch { } })
 
 $panel.Controls.AddRange(@($panelStatus, $panelClose, $panelTitle, $panelSummary, $panelMeta, $panelOpen, $panelRefresh, $panelLog))
 $panel.Add_Paint({
@@ -314,9 +349,11 @@ $panel.Add_Paint({
 function Update-CompanionPanel {
   $stateText = $P_TEXT[$current.state]
   if (-not $stateText) { $stateText = 'Unavailable' }
-  $panelStatus.Text = ($P_GLYPH[$current.state] + '  ' + $stateText)
+  $glyph = $P_GLYPH[$current.state]
+  if (-not $glyph) { $glyph = '?' }
+  $panelStatus.Text = ($glyph + '  ' + $stateText)
   $panelStatus.ForeColor = $P_COLOR[$current.state]
-  $panelTitle.Text = if ($current.title) { $current.title } else { '暂无活动任务' }
+  $panelTitle.Text = if ($current.title) { $current.title } elseif ($current.state -eq $P_IDLE) { '暂无活动任务' } else { $stateText }
   if ($current.detail) { $panelSummary.Text = $current.detail }
   elseif ($current.summary) { $panelSummary.Text = $current.summary }
   elseif ($current.state -eq $P_IDLE) { $panelSummary.Text = 'Harness 已连接，目前没有需要处理的任务。' }
@@ -336,12 +373,15 @@ function Set-PanelLocation {
   $panel.Location = [System.Drawing.Point]::new($px, $py)
 }
 
-function Toggle-CompanionPanel {
-  if ($panel.Visible) { $panel.Hide(); return }
+function Show-CompanionPanel {
   Update-CompanionPanel
   Set-PanelLocation
   $panel.Show($form)
   $panel.Activate()
+}
+
+function Toggle-CompanionPanel {
+  if ($panel.Visible) { $panel.Hide() } else { Show-CompanionPanel }
 }
 
 # ── brand whale (same SVG path as the web Orb) ──────────────────────────────
@@ -450,7 +490,7 @@ function Render-Orb {
 
     $c = $P_COLOR[$current.state]
     if (-not $c) { $c = $P_COLOR[$P_DISC] }
-    $quiet = ($current.state -eq $P_IDLE -or $current.state -eq $P_DONE -or $current.state -eq $P_DISC)
+    $quiet = $P_QUIET[$current.state] -eq $true
     $animated = (-not $quiet -or $fx.hover)
     $breath = if ($animated) { 0.5 + 0.5 * [Math]::Sin($fx.time * ([Math]::PI * 2) / 1.75) } else { 0.42 }
     $cx = [single]($BALL_X + $SIZE / 2)
@@ -592,7 +632,7 @@ $anim.Add_Tick({
   $fx.time += 0.016
   Update-Particles
   Complete-Poll # picks up the async presence response without blocking
-  $quiet = ($current.state -eq $P_IDLE -or $current.state -eq $P_DONE -or $current.state -eq $P_DISC)
+  $quiet = $P_QUIET[$current.state] -eq $true
   if ($fx.particles.Count -gt 0 -or -not $quiet -or $fx.hover) {
     Render-Orb
     $fx.staticPainted = $false
@@ -606,10 +646,17 @@ $anim.Start()
 # ── native drag / click ─────────────────────────────────────────────────────
 # WM_NCLBUTTONDOWN delegates movement to the Windows compositor. The layered
 # bitmap moves as one surface, so dragging does not race a PowerShell repaint.
+# Click = toggle the quick panel. The panel is hidden BEFORE the native drag
+# loop starts (a compositor drag must not fight an owned form), so the click
+# handler cannot rely on $panel.Visible afterwards: remember the pre-drag
+# visibility and, on a plain click, reopen only when the panel was closed
+# before (the old code re-showed the panel on every click, which made it
+# impossible to dismiss the panel by clicking the orb again).
 $form.Add_MouseDown({
   param($sender, $e)
   if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
-    if ($panel.Visible) { $panel.Hide() }
+    $wasVisible = $panel.Visible
+    if ($wasVisible) { $panel.Hide() }
     $before = [System.Drawing.Point]::new($form.Left, $form.Top)
     [LayeredOrbNative]::BeginDrag($form.Handle)
     $moved = ([Math]::Abs($form.Left - $before.X) -gt 3 -or [Math]::Abs($form.Top - $before.Y) -gt 3)
@@ -620,8 +667,11 @@ $form.Add_MouseDown({
       $ny = [Math]::Max($wa.Top, [Math]::Min($wa.Bottom - $CARD_H, $form.Top))
       $form.Location = [System.Drawing.Point]::new($nx, $ny)
       try { @{ x = $form.Left; y = $form.Top } | ConvertTo-Json | Set-Content -Path $posFile -Encoding UTF8 } catch { }
-    } else {
-      Toggle-CompanionPanel
+    } elseif (-not $wasVisible) {
+      # A drag was not needed and the panel was closed: this is a click that
+      # opens the panel. When the panel WAS open, it stays hidden (click
+      # again on the orb = dismiss).
+      Show-CompanionPanel
     }
     $fx.staticPainted = $false
     Render-Orb
@@ -642,12 +692,16 @@ $form.Add_MouseLeave({
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $panelItem = New-Object System.Windows.Forms.ToolStripMenuItem('展开任务面板')
 $panelItem.Add_Click({ Toggle-CompanionPanel })
+# Open the LOCAL harness GUI (loopback). The widget runs on the same PC as the
+# harness; the tailnet HTTPS name is a phone-access entry point (launcher-owned
+# serve mapping) and is deliberately never used here. Both actions use the
+# $HarnessUrl parameter, so a custom deployment can still point elsewhere.
 $openItem = New-Object System.Windows.Forms.ToolStripMenuItem('打开 Harness')
 $openItem.Add_Click({ try { Start-Process $HarnessUrl } catch { } })
 $refreshItem = New-Object System.Windows.Forms.ToolStripMenuItem('立即刷新')
 $refreshItem.Add_Click({ PollOnce | Out-Null })
 $logItem = New-Object System.Windows.Forms.ToolStripMenuItem('查看悬浮球日志')
-$logItem.Add_Click({ try { Start-Process -FilePath 'notepad.exe' -ArgumentList @($logFile) } catch { } })
+$logItem.Add_Click({ try { Start-Process -FilePath 'notepad.exe' -ArgumentList (ConvertTo-ArgLine @($logFile)) } catch { } })
 $quitItem = New-Object System.Windows.Forms.ToolStripMenuItem('退出')
 $quitItem.Add_Click({ $form.Close() })
 $menu.Items.Add($panelItem) | Out-Null
@@ -665,50 +719,55 @@ $tip.AutoPopDelay = 8000
 $tip.ReshowDelay = 80
 $tip.ShowAlways = $true
 
-# ── polling ─────────────────────────────────────────────────────────────────
-function Resolve-State {
-  param($r)
-  if (-not $r -or $r.ok -ne $true) {
-    $code = 'unknown'
-    try {
-      if ($r.error.code) { $code = [string]$r.error.code }
-      elseif ($r.error) { $code = [string]$r.error }
-    } catch { }
-    Set-State $P_DISC '' '' ('Presence 不可用 · ' + $code) 0
-    return
+# ── polling (decision plumbing) ────────────────────────────────────────────
+# Every poll-to-display decision is PURE and lives in scripts/orb-state.ps1
+# (Resolve-OrbPoll): task selection, stale snapshot cache detection (2.2),
+# the 401/403 -> unauthorized and transport-error -> offline mapping (2.3),
+# and the toast gate (only fresh transitions INTO NEEDS_USER/FAILED toast).
+# Invoke-OrbDecision only translates a decision onto the UI and remembers it
+# as the Previous record for the next poll.
+$pollDecision = @{ state = $P_DISC; taskTitle = ''; markerMs = [long]0; markerSeenMs = [long]0 }
+# Required tooltip/detail text for the two transport states (2.3). The
+# unauthorized sentence is shown verbatim (em dash included).
+$UNAUTHORIZED_NOTE = 'companion token invalid — re-run install or refresh the token'
+$OFFLINE_NOTE = 'Harness 不可达 — 检查看门狗 / 端口 3080'
+
+function Invoke-OrbDecision {
+  param([hashtable]$Poll)
+  $d = Resolve-OrbPoll -Poll $Poll -Previous $pollDecision -Config @{ pollIntervalSec = $IntervalSeconds }
+
+  if ($d.cacheStale) {
+    Log 'presence cache stale: dispatcher snapshot is not advancing'
   }
-  if (-not $r.value) {
-    Set-State $P_DISC '' '' 'Presence 响应缺少 value' 0
-    return
+
+  $detail = [string]$d.detail
+  $title = [string]$d.taskTitle
+  $summary = [string]$d.taskSummary
+  $count = [int]$d.taskCount
+  if ($d.unauthorized) {
+    # Never show the last-known task content while unauthorized, and never
+    # treat redacted placeholders as live data.
+    $detail = $UNAUTHORIZED_NOTE
+    $title = ''
+    $summary = ''
+  } elseif ($d.offline) {
+    $detail = $OFFLINE_NOTE
+    $title = ''
+    $summary = ''
   }
-  $tasksProperty = $r.value.PSObject.Properties['tasks']
-  if ($null -eq $tasksProperty -or $null -eq $tasksProperty.Value) {
-    Set-State $P_DISC '' '' 'Presence 响应缺少 tasks' 0
-    return
+
+  Set-State ([string]$d.state) $title $summary $detail $count
+
+  # Toast gating lives in the pure decision: no toast while unauthorized,
+  # offline or cache-stale; a fresh transition into NEEDS_USER/FAILED toasts.
+  if ($d.toastShouldFire) {
+    Show-StateToast ([string]$d.state) $title
   }
-  $tasks = @($tasksProperty.Value)
-  $best = $null; $bestP = 99
-  foreach ($t in $tasks) {
-    if (-not $t) { continue }
-    $st = [string]$t.state
-    $p = $P_PRIORITY[$st]
-    if ($null -eq $p) { $p = 99 }
-    if ($p -lt $bestP) { $best = $t; $bestP = $p }
-  }
-  if ($null -eq $best) {
-    Set-State $P_IDLE '' '' '' $tasks.Count
-  } else {
-    $state = [string]$best.state
-    if ($null -eq $P_PRIORITY[$state]) {
-      Set-State $P_DISC ([string]$best.title) ([string]$best.summary) ('Presence 返回未知状态 · ' + $state) $tasks.Count
-      return
-    }
-    $detail = ''
-    try {
-      if ($best.staleReason) { $detail = (@($best.staleReason) -join ' · ') }
-    } catch { }
-    Set-State $state ([string]$best.title) ([string]$best.summary) $detail $tasks.Count
-  }
+
+  $pollDecision.state = [string]$d.state
+  $pollDecision.taskTitle = $title
+  $pollDecision.markerMs = [long]$d.markerMs
+  $pollDecision.markerSeenMs = [long]$d.markerSeenMs
 }
 
 # ── Windows toast (native, zero-dependency via WinRT) ───────────────────────
@@ -716,8 +775,10 @@ function Resolve-State {
 # NEEDS_USER can otherwise sit unnoticed while the user is at the PC. A toast
 # is the OS-native channel: it survives fullscreen, lands in the Action
 # Center, and respects Focus Assist. Unpackaged processes need a registered
-# AUMID - PowerShell's own is always present, so we borrow it. Dedupe per
-# state transition (Set-State only calls this on a real change).
+# AUMID - PowerShell's own is always present, so we borrow it. This map is the
+# per-(state,title) second guard: Invoke-OrbDecision only calls this on a real
+# transition into an alert state (the pure decision in orb-state.ps1 decides),
+# and the map keeps the same alert from re-toasting later in the session.
 $toastNotified = @{}
 function Show-StateToast([string]$st, [string]$title) {
   try {
@@ -747,7 +808,7 @@ function Set-State {
     $st = $P_DISC
   }
   if ($current.state -ne $st) {
-    if ($st -eq $P_NEEDS -or $st -eq $P_FAILED) { Spawn-Burst 10; Show-StateToast $st $title }
+    if ($st -eq $P_NEEDS -or $st -eq $P_FAILED) { Spawn-Burst 10 }
     elseif ($st -eq $P_DONE) { Spawn-Burst 8 }
     elseif ($st -eq $P_RUNNING) { Spawn-Burst 4 }
   }
@@ -759,7 +820,14 @@ function Set-State {
   $current.updated = Get-Date -Format 'HH:mm:ss'
   # Emphasise exactly the states a human has to act on.
   $current.alert = ($st -eq $P_NEEDS -or $st -eq $P_FAILED)
-  $tip.SetToolTip($form, ($P_TEXT[$st] + $(if ($title) { ' · ' + $title } else { '' })))
+  # Tooltip: task title when present; otherwise surface the diagnostic detail
+  # (the unauthorized/offline/cache-stale notes are only visible through the
+  # tooltip and the panel, so they must not be swallowed here).
+  $label = $P_TEXT[$st]
+  if (-not $label) { $label = 'Unavailable' }
+  if ($title) { $tip.SetToolTip($form, ($label + ' · ' + $title)) }
+  elseif ($detail) { $tip.SetToolTip($form, $detail) }
+  else { $tip.SetToolTip($form, $label) }
   if ($panel.Visible) { Update-CompanionPanel }
   $fx.staticPainted = $false
 }
@@ -796,7 +864,7 @@ function PollOnce {
     $poll.task = $http.GetAsync($PresenceUrl)
   } catch {
     $poll.task = $null
-    Set-State $P_DISC '' '' 'Harness 不可达 — 检查看门狗 / 端口 3080' 0
+    Invoke-OrbDecision @{ kind = 'offline'; message = $_.Exception.Message }
   }
 }
 
@@ -805,31 +873,40 @@ function Complete-Poll {
   if ($null -eq $t -or -not $t.IsCompleted) { return }
   $poll.task = $null
   if ($t.IsFaulted -or $t.IsCanceled) {
-    Set-State $P_DISC '' '' 'Harness 不可达 — 检查看门狗 / 端口 3080' 0
+    # Transport failure (timeout / DNS / reset): the endpoint never answered.
+    Invoke-OrbDecision @{ kind = 'offline'; message = 'HttpClient task faulted or canceled' }
     return
   }
+  $resp = $null
   try {
     $resp = $t.Result
     $code = [int]$resp.StatusCode
     if ($code -eq 401 -or $code -eq 403) {
-      # The harness is alive and answering - it is refusing us. Saying
-      # "unreachable" here sent people to restart a watchdog that was fine.
-      Set-State $P_DISC '' '' 'Presence 拒绝本机伴侣令牌 — 请重启 Harness 后刷新' 0
-      $resp.Dispose()
+      # The harness is alive and answering - it is refusing our companion
+      # token (missing, rotated or removed). Explicit unauthorized state, and
+      # never a toast while it lasts.
+      Invoke-OrbDecision @{ kind = 'unauthorized'; code = $code }
       return
     }
     if (-not $resp.IsSuccessStatusCode) {
-      Set-State $P_DISC '' '' ('Presence 返回 HTTP ' + $code) 0
-      $resp.Dispose()
+      Invoke-OrbDecision @{ kind = 'http'; code = $code }
       return
     }
     # GetAsync buffers the body by default, so this completes immediately.
-    $body = $resp.Content.ReadAsStringAsync().Result
-    $resp.Dispose()
-    Resolve-State ($body | ConvertFrom-Json)
+    $bodyText = $resp.Content.ReadAsStringAsync().Result
+    $json = $null
+    try { $json = $bodyText | ConvertFrom-Json } catch { }
+    if ($null -eq $json) {
+      Invoke-OrbDecision @{ kind = 'parse'; message = 'response body is not JSON' }
+      return
+    }
+    $tokenSent = ($companionToken.Length -gt 0)
+    Invoke-OrbDecision @{ kind = 'ok'; body = $json; authenticated = $tokenSent }
   } catch {
     Log ('poll error: ' + $_.Exception.Message)
-    Set-State $P_DISC '' '' 'Presence 响应无法解析' 0
+    Invoke-OrbDecision @{ kind = 'offline'; message = $_.Exception.Message }
+  } finally {
+    if ($null -ne $resp) { try { $resp.Dispose() } catch { } }
   }
 }
 
@@ -847,15 +924,27 @@ $form.Add_FormClosed({
 })
 
 if ($SmokeTest) {
-  Resolve-State ([pscustomobject]@{
-    ok = $true
-    value = [pscustomobject]@{
-      tasks = @([pscustomobject]@{ state = $P_RUNNING; title = 'Smoke task'; summary = 'Companion panel runtime check'; staleReason = @() })
-    }
-  })
+  # Smoke drives the SAME decision path the live poll uses (Resolve-OrbPoll ->
+  # Invoke-OrbDecision), so the pure module, the virtual-state vocabulary and
+  # the UI mapping are all exercised together.
+  Invoke-OrbDecision @{
+    kind = 'ok'
+    authenticated = $true
+    body = ([pscustomobject]@{
+      ok = $true
+      cachedAt = [datetime]::UtcNow.ToString('o')
+      value = [pscustomobject]@{
+        tasks = @([pscustomobject]@{ state = $P_RUNNING; title = 'Smoke task'; summary = 'Companion panel runtime check'; updatedAt = 1; staleReason = @() })
+      }
+    })
+  }
   if ($current.state -ne $P_RUNNING -or $current.title -ne 'Smoke task') { throw 'valid presence snapshot did not select the running task' }
-  Resolve-State ([pscustomobject]@{ ok = $false; error = [pscustomobject]@{ code = 'sessions-unavailable' } })
+  Invoke-OrbDecision @{ kind = 'ok'; authenticated = $true; body = ([pscustomobject]@{ ok = $false; error = [pscustomobject]@{ code = 'sessions-unavailable' } }) }
   if ($current.state -ne $P_DISC -or $current.detail -notmatch 'sessions-unavailable') { throw 'host error was not surfaced as disconnected' }
+  Invoke-OrbDecision @{ kind = 'unauthorized'; code = 403 }
+  if ($current.state -ne $P_UNAUTH) { throw '401/403 was not surfaced as the explicit unauthorized state' }
+  Invoke-OrbDecision @{ kind = 'offline' }
+  if ($current.state -ne $P_OFFLINE) { throw 'transport failure was not surfaced as the offline state' }
   Set-State $P_RUNNING 'Smoke task' 'Companion panel runtime check' '' 1
   $fx.hover = $true
   Spawn-Burst 18

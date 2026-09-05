@@ -2,6 +2,56 @@
 
 All notable changes to `@zetaluolang/remfs-persistent` and the deploy package.
 
+## [1.4.0] — 2026-08 (push reliability + orb widget hardening)
+
+### Phone push
+- **Repeat-event re-notification** — push/browser dedupe is now keyed on
+  `sessionId:STATE:turnCycle` (new optional DTO field `turnCycle`, a
+  user-message counter) plus a 2-minute per-session cooldown, so a second
+  NEEDS_USER (multi-approval) or a FAILED→RUNNING→FAILED cycle in the same
+  session is alerted again instead of being silently swallowed by the old
+  7-day `sessionId:state` key.
+- **Endpoint allowlist** — subscriptions are accepted only for https endpoints
+  on known push providers (`fcm.googleapis.com`, `updates.push.services
+  .mozilla.com`, `web.push.apple.com`) plus an operator-configured
+  `pushEndpointAllow` list in `~/.dsh/remfs-options.json`; arbitrary
+  `http(s)://` endpoints are rejected with the frozen `bad-request` code,
+  closing the host-side SSRF / task-content exfiltration vector.
+- **Delivery health** — the dispatcher stamps every subscription with
+  `lastDeliveredAt` / `lastError`; new `files`-gated `push.status` operation
+  returns the owning device's per-endpoint health, and the Devices pane
+  renders "推送: ✅ x 分钟前 / ❌ reason" so a dead FCM channel is visible
+  instead of silent.
+- **Subscribe-time reachability probe** — `push.subscribe` OPTIONS-probes the
+  endpoint origin (4 s timeout, injectable fetch); unreachable endpoints are
+  still stored but the response carries `reachabilityWarning`, surfaced by the
+  client, so mainland-FCM problems are discovered at setup time.
+- **Click deep-link** — the push payload pins `sessionId`; the service worker
+  stashes the target in a Cache-API flag on `notificationclick`, focuses and
+  postMessages an open window (or opens the GUI cold), and the client consumes
+  the flag once on load and calls `sessions.open` (never creates) — tapping a
+  notification lands on the right session. Device click-through is manual-QA.
+
+### Desktop orb widget
+- **PS 5.1 argument quoting** — both `notepad.exe` call sites now go through
+  the proven `ConvertTo-ArgLine` style (spaced log paths stay one argv).
+- **Stale snapshot cache** — when the served `cachedAt` stamp stops advancing
+  for ≥ max(30 s, 3×poll interval), the widget shows DISCONNECTED with
+  `cache stale` detail instead of presenting stale task states; no toast
+  fires.
+- **Explicit unauthorized/offline** — 401/403 (and the default non-strict
+  "200 with everything redacted" signature when a token is held) now render a
+  dedicated 未授权 state with a fix-it tooltip; transport errors render a
+  distinct 离线 state; neither toasts.
+- **Interaction fix** — clicking the orb while the panel is open now closes it
+  (the old double-toggle made it impossible to dismiss); toast dedupe and
+  loopback URL usage verified and documented.
+- **Testability** — pure decision logic extracted to `scripts/orb-state.ps1`
+  (stamp precedence, staleness threshold, unauthorized/offline detection,
+  toast gate, task selection) with `test/orb-state.test.ps1` (plain-PS
+  assertions) wired into the Windows CI job; `install.ps1` deploys
+  `orb-state.ps1` beside the widget.
+
 ## [1.3.2] — 2026-08 (push delivery + P0 review hardening)
 
 - **Push dispatcher actually delivers (P0 fix)** — the dispatcher called

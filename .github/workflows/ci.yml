@@ -80,6 +80,9 @@ jobs:
       - name: Desktop companion runtime smoke test
         shell: powershell
         run: ./scripts/orb-widget.ps1 -SmokeTest -Quiet
+      - name: Orb state-decision logic test (fresh/stale cache, auth, toast gate)
+        shell: powershell
+        run: ./test/orb-state.test.ps1
       - name: Clean-user one-click install (isolated profile, offline DSH fixture)
         shell: powershell
         run: ./test/clean-install.integration.ps1

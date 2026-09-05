@@ -30,6 +30,7 @@ export const API_OPS = Object.freeze({
   PUSH_SUBSCRIBE: 'push.subscribe',
   PUSH_UNSUBSCRIBE: 'push.unsubscribe',
   PUSH_TEST: 'push.test', // added 2026-08 (freeze policy allows adding operations)
+  PUSH_STATUS: 'push.status', // added 2026-08 (delivery health, owner-scoped)
 })
 
 /** Frozen error-code vocabulary. Every error a consumer can receive is here. */
@@ -68,6 +69,12 @@ export function validateTaskDTO(dto) {
     problems.push('attention: null or { kind, summary }')
   }
   if (dto.staleReason !== null && !Array.isArray(dto.staleReason)) problems.push('staleReason: null or string[]')
+  // turnCycle was ADDED to v1 (backward-compatible). Absent is valid (old
+  // hosts / hand-built DTOs); when present it must be a finite non-negative
+  // number so notification dedupe keys never carry NaN or negatives.
+  if (dto.turnCycle !== undefined && (!num(dto.turnCycle) || dto.turnCycle < 0)) {
+    problems.push('turnCycle: non-negative finite number')
+  }
   if (!num(dto.sizeBytes) || dto.sizeBytes < 0) problems.push('sizeBytes: non-negative finite number')
   return problems
 }
@@ -110,4 +117,28 @@ export function validateStatusValue(value) {
 /** True when a value is a valid presence task DTO (fail-closed). */
 export function isTaskDTO(dto) {
   return validateTaskDTO(dto).length === 0
+}
+
+/**
+ * Validate the push.status response value (operation ADDED within the v1
+ * freeze, so its shape is only loosely constrained and may grow).
+ * @param {*} value - the { ok: true, value } payload.
+ * @returns {string[]} list of problems ([] = valid).
+ */
+export function validatePushStatusValue(value) {
+  const problems = []
+  if (!value || typeof value !== 'object') return ['push.status value must be an object']
+  if (!Array.isArray(value.subscriptions)) return ['subscriptions: array required']
+  const nonNegativeNum = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0
+  for (let i = 0; i < value.subscriptions.length; i++) {
+    const s = value.subscriptions[i]
+    const p = 'subscriptions[' + i + '].'
+    if (!s || typeof s !== 'object') { problems.push(p + 'must be an object'); continue }
+    if (typeof s.endpoint !== 'string' || !s.endpoint) problems.push(p + 'endpoint: non-empty string')
+    if (typeof s.origin !== 'string' || !s.origin) problems.push(p + 'origin: non-empty string')
+    if (s.createdAt !== null && typeof s.createdAt !== 'string') problems.push(p + 'createdAt: ISO string or null')
+    if (s.lastDeliveredAt !== null && !nonNegativeNum(s.lastDeliveredAt)) problems.push(p + 'lastDeliveredAt: non-negative finite number or null')
+    if (s.lastError !== null && typeof s.lastError !== 'string') problems.push(p + 'lastError: string or null')
+  }
+  return problems
 }

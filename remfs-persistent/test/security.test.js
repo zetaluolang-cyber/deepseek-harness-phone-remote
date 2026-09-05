@@ -580,14 +580,15 @@ test('remfs options: pocketStrict defaults OFF, fails closed on missing/corrupt 
   const { mkdtemp, writeFile, rm } = await import('node:fs/promises')
   const os = await import('node:os')
   const dir = await mkdtemp(path.join(os.tmpdir(), 'remfs-opt-'))
-  const DEFAULT = { pocketStrict: false, push: { done: false, intervalSeconds: 10 } }
+  const DEFAULT = { pocketStrict: false, push: { done: false, intervalSeconds: 10 }, pushEndpointAllow: [] }
+  const ONLY_STRICT = { pocketStrict: true, push: { done: false, intervalSeconds: 10 }, pushEndpointAllow: [] }
   try {
     const file = path.join(dir, 'remfs-options.json')
     // missing file -> default off
     assert.deepEqual(readRemfsOptions(file), DEFAULT)
     // explicit on
     await writeFile(file, JSON.stringify({ pocketStrict: true }), 'utf8')
-    assert.deepEqual(readRemfsOptions(file), { pocketStrict: true, push: { done: false, intervalSeconds: 10 } })
+    assert.deepEqual(readRemfsOptions(file), ONLY_STRICT)
     // explicit off
     await writeFile(file, JSON.stringify({ pocketStrict: false }), 'utf8')
     assert.deepEqual(readRemfsOptions(file), DEFAULT)
@@ -596,11 +597,21 @@ test('remfs options: pocketStrict defaults OFF, fails closed on missing/corrupt 
     assert.deepEqual(readRemfsOptions(file), DEFAULT)
     // unknown keys are ignored; truthy coercion is explicit
     await writeFile(file, JSON.stringify({ other: 1, pocketStrict: 'yes' }), 'utf8')
-    assert.deepEqual(readRemfsOptions(file), { pocketStrict: true, push: { done: false, intervalSeconds: 10 } })
+    assert.deepEqual(readRemfsOptions(file), ONLY_STRICT)
     // push options: done defaults off; intervalSeconds clamps and defaults to 10
     await writeFile(file, JSON.stringify({ push: { done: true, intervalSeconds: 0 } }), 'utf8')
-    assert.deepEqual(readRemfsOptions(file), { pocketStrict: false, push: { done: true, intervalSeconds: 10 } })
+    assert.deepEqual(readRemfsOptions(file), { pocketStrict: false, push: { done: true, intervalSeconds: 10 }, pushEndpointAllow: [] })
     await writeFile(file, JSON.stringify({ push: { done: 'yes', intervalSeconds: 30 } }), 'utf8')
-    assert.deepEqual(readRemfsOptions(file), { pocketStrict: false, push: { done: true, intervalSeconds: 30 } })
+    assert.deepEqual(readRemfsOptions(file), { pocketStrict: false, push: { done: true, intervalSeconds: 30 }, pushEndpointAllow: [] })
+    // pushEndpointAllow: strings kept + trimmed; junk (non-array / non-strings)
+    // fails closed to [] so only the built-in providers are ever accepted
+    await writeFile(file, JSON.stringify({ pushEndpointAllow: [' https://push.example.com ', 42, null, '', 'wpush.corp.test'] }), 'utf8')
+    assert.deepEqual(readRemfsOptions(file), {
+      pocketStrict: false,
+      push: { done: false, intervalSeconds: 10 },
+      pushEndpointAllow: ['https://push.example.com', 'wpush.corp.test'],
+    })
+    await writeFile(file, JSON.stringify({ pushEndpointAllow: 'not-an-array' }), 'utf8')
+    assert.deepEqual(readRemfsOptions(file), DEFAULT)
   } finally { await rm(dir, { recursive: true, force: true }) }
 })

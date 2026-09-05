@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { STATE, STATE_PRIORITY, PRESENCE_OPS, makeTaskDTO } from '../lib/presence/contract.js'
 import {
   API_VERSION, API_ENGINE, API_OPS, ERROR_CODES, API_STATES,
-  validateTaskDTO, validateTasksValue, validateStatusValue, isTaskDTO,
+  validateTaskDTO, validateTasksValue, validateStatusValue, validatePushStatusValue, isTaskDTO,
 } from '../lib/presence/api.js'
 import { createPresenceService } from '../lib/presence/service.js'
 
@@ -30,6 +30,8 @@ test('presence api v1: version and engine are frozen', () => {
     // push.test added 2026-08 — the freeze allows ADDING operations; this
     // literal exists so an addition is always a deliberate test change.
     PUSH_TEST: 'push.test',
+    // push.status added 2026-08 — owner-scoped delivery health (1.3).
+    PUSH_STATUS: 'push.status',
   })
   assert.deepEqual(Object.keys(API_OPS).sort(), Object.keys(PRESENCE_OPS).sort(),
     'api.js operations must mirror contract PRESENCE_OPS')
@@ -87,6 +89,29 @@ test('presence api v1: a real task DTO passes validation', () => {
   assert.equal(isTaskDTO(dto), true)
   assert.deepEqual(validateTaskDTO(dto), [])
   assert.equal(dto.sizeBytes, 12345678)
+  // turnCycle is ADDED to v1 (always present from makeTaskDTO, default 0)
+  assert.equal(dto.turnCycle, 0, 'turnCycle defaults to 0')
+})
+
+test('presence api v1: turnCycle is optional but must be a non-negative finite number when present', () => {
+  // absent (older hosts / hand-built DTOs) is valid
+  const dto = makeTaskDTO({ taskId: 't', sessionId: 's', state: STATE.RUNNING })
+  delete dto.turnCycle
+  assert.deepEqual(validateTaskDTO(dto), [], 'absent turnCycle is backward-compatible')
+  // present and valid
+  const ok = makeTaskDTO({ taskId: 't', sessionId: 's', turnCycle: 3 })
+  assert.equal(ok.turnCycle, 3)
+  assert.deepEqual(validateTaskDTO(ok), [])
+  // junk values fail closed (never NaN/negative/float keys on the wire)
+  const neg = makeTaskDTO({ taskId: 't', sessionId: 's' })
+  neg.turnCycle = -1
+  assert.ok(validateTaskDTO(neg).some((p) => /turnCycle/.test(p)), 'negative turnCycle must fail')
+  const nan = makeTaskDTO({ taskId: 't', sessionId: 's' })
+  nan.turnCycle = 'x'
+  assert.ok(validateTaskDTO(nan).some((p) => /turnCycle/.test(p)), 'non-numeric turnCycle must fail')
+  // makeTaskDTO itself clamps bad input to 0
+  assert.equal(makeTaskDTO({ taskId: 't', sessionId: 's', turnCycle: -5 }).turnCycle, 0)
+  assert.equal(makeTaskDTO({ taskId: 't', sessionId: 's', turnCycle: 'nope' }).turnCycle, 0)
 })
 
 test('presence api v1: DTO validation fails closed on bad shapes', () => {
@@ -134,6 +159,36 @@ test('presence api v1: tasks/status value validators enforce the frozen shapes',
   assert.ok(validateStatusValue({ ...status, apiVersion: 'v2' }).some((p) => /apiVersion/.test(p)),
     'a bumped apiVersion must fail v1 validation')
   assert.ok(validateStatusValue({ ...status, engine: 'presence-v2' }).some((p) => /engine/.test(p)))
+})
+
+test('presence api v1: push.status value validator accepts real health DTOs and fails closed', () => {
+  const ok = {
+    subscriptions: [{
+      endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
+      origin: 'https://fcm.googleapis.com',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      lastDeliveredAt: 1755388800000,
+      lastError: null,
+    }, {
+      endpoint: 'https://web.push.apple.com/x',
+      origin: 'https://web.push.apple.com',
+      createdAt: null,
+      lastDeliveredAt: null,
+      lastError: 'http 500',
+      lastErrorAt: 1755388801000,
+    }],
+  }
+  assert.deepEqual(validatePushStatusValue(ok), [])
+  assert.deepEqual(validatePushStatusValue({ subscriptions: [] }), [])
+  assert.ok(validatePushStatusValue(null).length > 0)
+  assert.ok(validatePushStatusValue({}).length > 0, 'missing subscriptions array must fail')
+  assert.ok(validatePushStatusValue({ subscriptions: [null] }).length > 0)
+  assert.ok(validatePushStatusValue({ subscriptions: [{ endpoint: '', origin: 'x' }] }).some((p) => /endpoint/.test(p)))
+  assert.ok(validatePushStatusValue({ subscriptions: [{ endpoint: 'x', origin: '' }] }).some((p) => /origin/.test(p)))
+  const badTime = { subscriptions: [{ endpoint: 'x', origin: 'x', lastDeliveredAt: -3, lastError: null }] }
+  assert.ok(validatePushStatusValue(badTime).some((p) => /lastDeliveredAt/.test(p)), 'negative lastDeliveredAt must fail')
+  const badErr = { subscriptions: [{ endpoint: 'x', origin: 'x', lastError: 42 }] }
+  assert.ok(validatePushStatusValue(badErr).some((p) => /lastError/.test(p)))
 })
 
 // ------------------------------------------------------------ live service

@@ -571,24 +571,32 @@ export function optionsFile() {
 /**
  * Read the operator options.
  * @param {string} [file] - options file path (defaults to optionsFile()).
- * @returns {{ pocketStrict: boolean, push: { done: boolean, intervalSeconds: number } }}
+ * @returns {{ pocketStrict: boolean, push: { done: boolean, intervalSeconds: number }, pushEndpointAllow: string[] }}
  *   - pocketStrict: when true, /pocket STATUS/TASKS also require a valid device
  *     credential (default: false).
  *   - push.done: when true, DONE transitions also produce a Web Push
  *     notification (NEEDS_USER/FAILED always do; default: false).
  *   - push.intervalSeconds: dispatcher poll interval (clamped 5..60, default 10).
+ *   - pushEndpointAllow: extra push-provider endpoint hosts (or https origins)
+ *     accepted by push.subscribe IN ADDITION to the built-in FCM/Mozilla/Apple
+ *     allowlist. Fail closed to [] (only the built-in providers) on missing,
+ *     corrupt or non-array values.
  */
 export function readRemfsOptions(file = optionsFile()) {
   let obj = null
   try {
     obj = JSON.parse(readFileSync(file, 'utf8'))
   } catch {
-    return { pocketStrict: false, push: { done: false, intervalSeconds: 10 } }
+    return { pocketStrict: false, push: { done: false, intervalSeconds: 10 }, pushEndpointAllow: [] }
   }
   const pushRaw = (obj && obj.push) || {}
   const push = {
     done: !!(pushRaw && pushRaw.done),
     intervalSeconds: Number(pushRaw && pushRaw.intervalSeconds) > 0 ? Number(pushRaw.intervalSeconds) : 10,
   }
-  return { pocketStrict: !!(obj && obj.pocketStrict), push }
+  const rawAllow = obj && obj.pushEndpointAllow
+  const pushEndpointAllow = Array.isArray(rawAllow)
+    ? rawAllow.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim())
+    : []
+  return { pocketStrict: !!(obj && obj.pocketStrict), push, pushEndpointAllow }
 }

@@ -181,6 +181,17 @@ window.__ModuleLoader__.load({
       return (n / 1024 / 1024).toFixed(1) + ' MB'
     }
 
+    // Short "x 分钟前 / min ago" label for epoch-ms timestamps (push delivery).
+    const agoLabel = (ms) => {
+      const diff = Math.max(0, Date.now() - Number(ms))
+      const m = Math.floor(diff / 60000)
+      if (m < 1) return lang === 'zh' ? '刚刚' : 'just now'
+      if (m < 60) return lang === 'zh' ? m + ' 分钟前' : m + ' min ago'
+      const h = Math.floor(m / 60)
+      if (h < 24) return lang === 'zh' ? h + ' 小时前' : h + ' h ago'
+      return lang === 'zh' ? Math.floor(h / 24) + ' 天前' : Math.floor(h / 24) + ' d ago'
+    }
+
     // Sessions above this on-disk size get a "suggest archiving" hint in the
     // session/workspace lists (big persisted logs bloat harness memory).
     const ARCHIVE_HINT_BYTES = 10 * 1024 * 1024
@@ -453,9 +464,59 @@ window.__ModuleLoader__.load({
         const reg = await navigator.serviceWorker.register('/remfs-sw.js')
         await navigator.serviceWorker.ready
         reg.addEventListener('pushsubscriptionchange', () => { ensurePushSubscription(conn, reg) })
+        // 1.5: notification click deep-link. The SW stashes the target session
+        // in a Cache-API flag (SWs cannot touch localStorage) and posts a
+        // message to an already-open window; both paths land here.
+        navigator.serviceWorker.addEventListener('message', (e) => {
+          const d = e && e.data
+          if (d && d.type === 'remfs-push-target') {
+            openPushTarget(d.sessionId)
+            clearPushTargetFlag()
+          }
+        })
         if (getCred() && pushEnabled()) ensurePushSubscription(conn, reg)
         return { supported: true, reg }
       } catch { return { supported: false } }
+    }
+
+    // ── Notification click deep-link (1.5) ────────────────────────────────
+    // Tapping a push notification must land the user in the right session.
+    // The GUI has no session URL routing, so the SW writes a same-origin
+    // Cache-API flag (cache 'remfs-persistent-push-v1', key '/remfs-push-target')
+    // holding the sessionId; on page load this flag is read once, the session
+    // is opened via ctx.sessions.open(id) (selects an EXISTING session, never
+    // a replacement) and the flag is deleted. Reading fails silently whenever
+    // the API is absent (no SW / no session service).
+    const PUSH_TARGET_CACHE = 'remfs-persistent-push-v1'
+    const PUSH_TARGET_KEY = '/remfs-push-target'
+    const openPushTarget = (sessionId) => {
+      if (!sessionId) return
+      try {
+        if (window.__remfsSessionsApi && typeof window.__remfsSessionsApi.open === 'function') {
+          window.__remfsSessionsApi.open(String(sessionId))
+        }
+      } catch { /* best-effort: the session may no longer exist */ }
+    }
+    const clearPushTargetFlag = () => {
+      try {
+        if (typeof window.caches === 'undefined') return
+        window.caches.open(PUSH_TARGET_CACHE).then((cache) => {
+          cache.delete(PUSH_TARGET_KEY).catch(() => { /* ignore */ })
+        }).catch(() => { /* ignore */ })
+      } catch { /* ignore */ }
+    }
+    const consumePushTarget = () => {
+      try {
+        if (typeof window.caches === 'undefined') return
+        window.caches.open(PUSH_TARGET_CACHE).then((cache) =>
+          cache.match(PUSH_TARGET_KEY).then((hit) => {
+            if (!hit) return null
+            cache.delete(PUSH_TARGET_KEY).catch(() => { /* ignore */ })
+            return hit.text()
+          })
+        ).then((sessionId) => { if (sessionId) openPushTarget(sessionId) })
+          .catch(() => { /* ignore */ })
+      } catch { /* ignore */ }
     }
 
     const friendlyErr = (msg, code) => {
@@ -490,7 +551,18 @@ window.__ModuleLoader__.load({
     // page alerts the user with no orb and no board open. Permission is only
     // ever requested by the push toggle; without a grant this stays silent.
     const P_NOTIFY = { [P_NEEDS]: true, [P_FAILED]: true }
-    const notifiedKeys = {} // sessionId:state -> true (page-lifetime dedupe)
+    // 1.1: browser notification dedupe mirrors the host push dispatcher. Keys
+    // are sessionId:STATE:turnCycle (page-lifetime) so a repeat NEEDS_USER /
+    // FAILED after a NEW user turn re-alerts, and a per-session 2-minute
+    // cooldown keeps rapid cycles from spamming. A cooldown-suppressed event
+    // is NOT marked, so a later poll re-checks it once the window elapses.
+    const NOTIFY_COOLDOWN_MS = 2 * 60 * 1000
+    const notifiedKeys = {} // sessionId:state:turnCycle -> true (page-lifetime dedupe)
+    const notifiedAtBySession = {} // sessionId -> epoch ms of the last page alert
+    const taskNotifyCycle = (task) => {
+      const n = Number(task && task.turnCycle)
+      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0
+    }
     function firePresenceNotification(task) {
       try {
         if (typeof Notification !== 'function' || Notification.permission !== 'granted') return
@@ -511,11 +583,15 @@ window.__ModuleLoader__.load({
       if (typeof Notification !== 'function' || Notification.permission !== 'granted') return
       pocketRpc(conn, 'presence.tasks', {}).then((r) => {
         if (!(r && r.ok && r.value && Array.isArray(r.value.tasks))) return
+        const now = Date.now()
         for (const task of r.value.tasks) {
           if (!task || P_NOTIFY[task.state] !== true) continue
-          const key = task.sessionId + ':' + task.state
+          const key = task.sessionId + ':' + task.state + ':' + taskNotifyCycle(task)
           if (notifiedKeys[key]) continue
+          const last = notifiedAtBySession[task.sessionId] || 0
+          if (now - last < NOTIFY_COOLDOWN_MS) continue // cooldown: retried on a later poll
           notifiedKeys[key] = true
+          notifiedAtBySession[task.sessionId] = now
           firePresenceNotification(task)
         }
       }).catch(() => { /* best-effort */ })
@@ -660,6 +736,15 @@ window.__ModuleLoader__.load({
       const [pairing, setPairing] = React.useState(false)
       const [devicesOpen, setDevicesOpen] = React.useState(false)
       const [devices, setDevices] = React.useState([])
+      // pushHealth (1.3): the push.status response for the CURRENT device
+      // (owner-scoped) - null when the op is absent or failed, which keeps the
+      // Devices pane rendering exactly as before (no push delivery lines).
+      const [pushHealth, setPushHealth] = React.useState(null)
+      const loadPushHealth = () => {
+        pocketRpc(conn, 'push.status', {}).then((r) => {
+          setPushHealth(r && r.ok && r.value ? r.value : null)
+        }).catch(() => setPushHealth(null))
+      }
       const [pushReg, setPushReg] = React.useState(null)
       const [pushOk, setPushOk] = React.useState(pushSupported())
       const [pushAsk, setPushAsk] = React.useState(false)
@@ -1011,16 +1096,49 @@ window.__ModuleLoader__.load({
           t('hideSystem')
         ),
         React.createElement('button', { className: 'remfs-manage', onClick: () => { setMoreOpen(false); setManaging(true); setManageText(allowed.join('\n')) } }, t('manageRoots')),
-        React.createElement('button', { className: 'remfs-manage', onClick: () => { setMoreOpen(false); setDevicesOpen(true); loadDevices() } }, t('devMgmt'))
+        React.createElement('button', { className: 'remfs-manage', onClick: () => { setMoreOpen(false); setDevicesOpen(true); loadDevices(); loadPushHealth() } }, t('devMgmt'))
       ) : null
+
+      // 1.3 push delivery line (owner-scoped): push.status only returns the
+      // CALLING device's subscriptions, so the line renders only under the
+      // device row matching the current credential. Every other device - or an
+      // absent/errored push.status op - renders nothing (non-breaking).
+      const pushDeliveryLines = (d) => {
+        if (!d || !pushHealth || !Array.isArray(pushHealth.subscriptions)) return null
+        const mine = getCred()
+        if (!mine || String(d.id) !== String(mine.deviceId)) return null
+        const prefix = lang === 'zh' ? '推送' : 'Push'
+        const lines = []
+        for (const sub of pushHealth.subscriptions) {
+          const err = sub.lastError || null
+          const errAt = Number(sub.lastErrorAt) || 0
+          const delAt = Number(sub.lastDeliveredAt) || 0
+          let text
+          if (err) {
+            text = prefix + ': ❌ ' + err + (errAt > 0 ? ' (' + agoLabel(errAt) + ')' : '')
+          } else if (delAt > 0) {
+            text = prefix + ': ✅ ' + agoLabel(delAt)
+          } else {
+            text = prefix + (lang === 'zh' ? ': 尚未收到推送' : ': no delivery yet')
+          }
+          lines.push(React.createElement('div', {
+            key: sub.endpoint,
+            style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary,#999)', wordBreak: 'break-all', marginTop: 2 },
+          }, text))
+        }
+        return lines.length > 0 ? lines : null
+      }
 
       const devicesPane = devicesOpen ? React.createElement('div', { className: 'remfs-manager' },
         React.createElement('div', null, t('devicesTitle')),
         devices.length === 0 ? React.createElement('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary,#999)' } }, t('noDevices')) :
-        devices.map((d) => React.createElement('div', { key: d.id, style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 } },
-          React.createElement('span', { style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, d.name),
-          React.createElement('span', { style: { color: 'var(--dsw-alias-label-secondary,#999)' } }, new Date(d.lastSeen).toLocaleString()),
-          React.createElement('button', { className: 'remfs-btn', onClick: () => doRevoke(d.id) }, t('revokeBtn'))
+        devices.map((d) => React.createElement('div', { key: d.id, style: { marginBottom: 6 } },
+          React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 } },
+            React.createElement('span', { style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, d.name),
+            React.createElement('span', { style: { color: 'var(--dsw-alias-label-secondary,#999)' } }, new Date(d.lastSeen).toLocaleString()),
+            React.createElement('button', { className: 'remfs-btn', onClick: () => doRevoke(d.id) }, t('revokeBtn'))
+          ),
+          pushDeliveryLines(d)
         )),
         React.createElement('label', { className: 'remfs-hidebox', style: { marginTop: 8, borderTop: '1px solid rgba(128,128,128,.25)', paddingTop: 8 }, title: t('pushUnsupported') },
           React.createElement('input', { type: 'checkbox', checked: pushEnabled(), disabled: !pushOk, onChange: (e) => onTogglePush(e.target.checked) }),
@@ -1257,6 +1375,9 @@ window.__ModuleLoader__.load({
       // Session handoff: ctx.sessions.open(id) selects the EXISTING session
       // (never creates a replacement).
       try { window.__remfsSessionsApi = ctx.get('sessions') || null } catch { window.__remfsSessionsApi = null }
+      // Notification deep-link: a push click stashed the target session id in
+      // the Cache-API flag while this page was closed - open it now, once.
+      try { consumePushTarget() } catch { /* ignore */ }
       const conn = ctx.get('connection')
       if (conn === undefined) return
       const timer = ctx.get('timer')

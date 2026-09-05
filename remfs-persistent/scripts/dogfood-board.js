@@ -26,7 +26,7 @@ import {
 } from '../lib/presence/contract.js'
 import {
   hasPendingApproval, terminalFailure, completed, agentRunning, hasOpenTurn,
-  titleFromEvents, fileChangeCount, firstTime, lastTime,
+  titleFromEvents, fileChangeCount, userTurnCount, firstTime, lastTime,
 } from '../lib/presence/service.js'
 
 const ZSTD_MAGIC = 4247762216 // 0xFD2FB528
@@ -202,6 +202,8 @@ export function buildTasks(sessions, opts = {}) {
         fileChanges: fileChangeCount(events),
         taskTransitions: 0,
       }) : null,
+      // turnCycle: same derivation as the live service (user-role message count)
+      turnCycle: userTurnCount(events),
     }))
   }
   tasks.sort((a, b) => {

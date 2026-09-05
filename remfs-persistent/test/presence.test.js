@@ -23,8 +23,10 @@ import {
 } from '../lib/presence/heartbeat.js'
 import { resolveState, transition } from '../lib/presence/state.js'
 import { summarize, staleReasonLines } from '../lib/presence/summary.js'
+import { validateTaskDTO } from '../lib/presence/api.js'
 import {
   createPresenceService, terminalFailure, hasToolErrorInLastTurn, hasOpenTurn,
+  userTurnCount,
 } from '../lib/presence/service.js'
 
 // Fixed synthetic base time for PURE state/heartbeat tests: every one of
@@ -642,6 +644,45 @@ test('presence contract: DTO defaults and stale threshold normalization', () => 
   for (const s of Object.values(STATE)) {
     assert.ok(STATE_LABEL[s] && STATE_LABEL[s].icon && STATE_LABEL[s].text, 'label for ' + s)
   }
+})
+
+// ------------------------------------------------------------ turnCycle (1.1)
+
+test('userTurnCount: counts user-role messages across event shapes', () => {
+  assert.equal(userTurnCount([]), 0)
+  assert.equal(userTurnCount(null), 0)
+  const events = [
+    ev('user/message', { content: 'hello' }, t0),
+    ev('assistant/message', { message: { role: 'assistant', content: 'hi' } }, t0 + 100),
+    ev('message', { role: 'user', content: 'another user turn' }, t0 + 200),
+    ev('tool/result', { name: 'bash', message: { role: 'tool', content: 'ok' } }, t0 + 300),
+    ev('user/message', { text: 'second hello' }, t0 + 400),
+  ]
+  assert.equal(userTurnCount(events), 3, 'user/message events and role=user records count')
+})
+
+test('presence service: task DTOs expose turnCycle = count of user-role messages', async () => {
+  const nowish = minsAgo(1)
+  const ctx = fakeCtx({
+    records: [{ id: 's-turn', header: { createdAt: minsAgo(10) } }],
+    liveIds: ['s-turn'],
+    eventsBySession: {
+      's-turn': [
+        ev('user/message', { content: 'please fix the fs bug' }, minsAgo(5)),
+        turnStart(1, minsAgo(5) + 100),
+        toolOk('edit', '{"p":"a.txt"}', minsAgo(5) + 200),
+        ev('user/message', { content: 'now also the tests' }, nowish),
+        turnStart(2, nowish + 100),
+        toolOk('bash', '{"command":"node --test"}', nowish + 200),
+      ],
+    },
+  })
+  const svc = createPresenceService(ctx, { staleMinutes: 20 })
+  const res = await svc.tasks()
+  assert.equal(res.ok, true)
+  const t = res.value.tasks[0]
+  assert.equal(t.turnCycle, 2, 'two user messages must advance the turn cycle to 2')
+  assert.deepEqual(validateTaskDTO(t), [], 'the ADDED turnCycle field keeps the DTO v1-valid')
 })
 
 // ------------------------------------------------------------ service fail-closed

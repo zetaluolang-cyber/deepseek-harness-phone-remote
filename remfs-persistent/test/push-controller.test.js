@@ -3,14 +3,16 @@
 // sendPush takes one options object: every real dispatch threw inside the
 // cycle-level catch, so the dispatcher had NEVER delivered a push. These tests
 // drive tick() through the REAL sendPush (fetch faked) so the calling
-// convention can never silently drift again.
+// convention can never silently drift again. They also pin the 1.1 dedupe
+// (sessionId:STATE:turnCycle triple + per-session 2-minute cooldown), the
+// per-subscription delivery health (1.3) and the sessionId-carrying payload.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { createPushStore } from '../lib/push/store.js'
-import { createPushController } from '../lib/push/controller.js'
+import { createPushController, buildPushPayload, normalizeTurnCycle, SESSION_PUSH_COOLDOWN_MS } from '../lib/push/controller.js'
 import { sendPush } from '../lib/push/webpush.js'
 import { generateVapidKeys } from '../lib/push/vapid.js'
 import { createECDH } from 'node:crypto'
@@ -35,6 +37,17 @@ function needsUserTask(id = 's1') {
     ok: true,
     value: {
       tasks: [{ sessionId: id, taskId: id, state: 'NEEDS_USER', title: 'T', summary: 'S' }],
+      orb: null,
+    },
+  }
+}
+
+/** Task snapshot with an explicit state and turnCycle (1.1 fixtures). */
+function taskWith(id, state, turnCycle, title = 'T') {
+  return {
+    ok: true,
+    value: {
+      tasks: [{ sessionId: id, taskId: id, state, turnCycle, title, summary: 'S' }],
       orb: null,
     },
   }
@@ -99,4 +112,152 @@ test('dispatch: gone endpoint (404/410) is dropped, never retried', async (t) =>
   })
   await controller.tick()
   assert.equal((await store.subscriptions()).length, 0, 'expired subscription must be removed')
+})
+
+// ------------------------------------------------- 1.1 payload + turn-cycle dedupe
+
+test('dispatch: the push payload always carries the target sessionId (deep-link)', () => {
+  const labels = { NEEDS_USER: 'Needs you', FAILED: 'Failed', DONE: 'Done', FALLBACK: 'Fallback' }
+  const p = JSON.parse(buildPushPayload(
+    { sessionId: 'session-abc', taskId: 'session-abc', state: 'NEEDS_USER', title: 'Fix fs', summary: 'working' },
+    labels,
+  ))
+  assert.equal(p.sessionId, 'session-abc', 'the SW needs the sessionId to deep-link into the session')
+  assert.equal(p.title, 'Needs you')
+  assert.equal(p.body, 'Fix fs — working')
+  assert.equal(p.tag, 'remfs-push-session-abc')
+  assert.equal(p.url, '/')
+  // FAILED falls back to the language table like the dispatcher does
+  const f = JSON.parse(buildPushPayload({ sessionId: 's2', state: 'FAILED' }, labels))
+  assert.equal(f.sessionId, 's2')
+})
+
+test('normalizeTurnCycle: clamps any input to a finite non-negative integer', () => {
+  assert.equal(normalizeTurnCycle(0), 0)
+  assert.equal(normalizeTurnCycle(3), 3)
+  assert.equal(normalizeTurnCycle('3.9'), 3)
+  assert.equal(normalizeTurnCycle(-1), 0)
+  assert.equal(normalizeTurnCycle(undefined), 0)
+  assert.equal(normalizeTurnCycle(NaN), 0)
+  assert.equal(normalizeTurnCycle(Infinity), 0)
+})
+
+test('dispatch: a repeat NEEDS_USER after a NEW user turn (turnCycle+1) is pushed again', async (t) => {
+  const { store } = await setup(t)
+  await store.addSubscription('dev1', realishSub(1), 'zh')
+  let sent = 0
+  // tasksNow is mutable: the controller captures `() => tasksNow()` at
+  // construction, so later ticks can present a NEW task snapshot.
+  let tasksNow = () => taskWith('s1', 'NEEDS_USER', 1)
+  const controller = createPushController({
+    tasks: () => tasksNow(),
+    store,
+    isDeviceValid: async () => true,
+    options: { push: { done: false, intervalSeconds: 10 } },
+    log: () => {},
+    sender: async () => { sent++; return { status: 'sent' } },
+  })
+  const t0 = 1_000_000
+  // first NEEDS_USER (cycle 1)
+  assert.equal((await controller.tick(t0)).pushed, 1)
+  // still waiting at the SAME cycle, long after any cooldown -> dedupe holds
+  assert.equal((await controller.tick(t0 + 10 * 60 * 1000)).pushed, 0)
+  // the user answers -> a new user message -> cycle 2 -> re-notify
+  tasksNow = () => taskWith('s1', 'NEEDS_USER', 2)
+  assert.equal((await controller.tick(t0 + 11 * 60 * 1000)).pushed, 1, 'a new turn must re-notify')
+  assert.equal(sent, 2)
+})
+
+test('dispatch: per-session cooldown suppresses rapid repeats and retries after 2 minutes', async (t) => {
+  const { store } = await setup(t)
+  await store.addSubscription('dev1', realishSub(1), 'en')
+  let sent = 0
+  let tasksNow = () => taskWith('s1', 'FAILED', 1)
+  const controller = createPushController({
+    tasks: () => tasksNow(),
+    store,
+    isDeviceValid: async () => true,
+    options: { push: { done: false, intervalSeconds: 10 } },
+    log: () => {},
+    sender: async () => { sent++; return { status: 'sent' } },
+  })
+  const t0 = 1_000_000
+  assert.equal((await controller.tick(t0)).pushed, 1)
+  // FAILED -> RUNNING -> FAILED again, but still inside the same user turn
+  // (cycle 1) AND inside the 2-minute cooldown: suppressed, not spammed.
+  tasksNow = () => taskWith('s1', 'RUNNING', 1)
+  assert.equal((await controller.tick(t0 + 10_000)).pushed, 0, 'RUNNING is not notify-worthy')
+  tasksNow = () => taskWith('s1', 'FAILED', 1)
+  assert.equal((await controller.tick(t0 + 30_000)).pushed, 0, 'same-session push inside the cooldown must be skipped')
+  assert.equal(sent, 1, 'no spamming push was sent during the cooldown')
+  // once the cooldown window elapsed AND the state re-appears at cycle 1, the
+  // persisted triple dedupe still holds - only a NEW cycle re-notifies
+  assert.equal((await controller.tick(t0 + 5 * 60 * 1000)).pushed, 0, 'same triple stays deduped for 7 days')
+  assert.equal(sent, 1)
+})
+
+test('dispatch: cooldown-boundary retry - a NEW cycle suppressed by the cooldown is delivered after it', async (t) => {
+  const { store } = await setup(t)
+  await store.addSubscription('dev1', realishSub(1), 'zh')
+  let sent = 0
+  let tasksNow = () => taskWith('s1', 'NEEDS_USER', 1)
+  const controller = createPushController({
+    tasks: () => tasksNow(),
+    store,
+    isDeviceValid: async () => true,
+    options: { push: { done: false, intervalSeconds: 10 } },
+    log: () => {},
+    sender: async () => { sent++; return { status: 'sent' } },
+  })
+  const t0 = 1_000_000
+  assert.equal((await controller.tick(t0)).pushed, 1)
+  // the user replies quickly (30s later) -> cycle 2, but inside the cooldown
+  tasksNow = () => taskWith('s1', 'NEEDS_USER', 2)
+  assert.equal((await controller.tick(t0 + 30_000)).pushed, 0, 'cycle 2 is real but must wait out the cooldown')
+  assert.equal(sent, 1)
+  // the dispatcher keeps polling; once 2 minutes have passed the pending
+  // cycle-2 event is delivered (it was never marked while suppressed)
+  assert.equal((await controller.tick(t0 + SESSION_PUSH_COOLDOWN_MS + 10_000)).pushed, 1)
+  assert.equal(sent, 2)
+  // and now the cycle-2 triple is marked: no third push while it persists
+  assert.equal((await controller.tick(t0 + 60 * 60 * 1000)).pushed, 0)
+  assert.equal(sent, 2)
+})
+
+// ------------------------------------------------------------ 1.3 delivery health
+
+test('dispatch: successful sends stamp lastDeliveredAt; failures stamp lastError', async (t) => {
+  const { store } = await setup(t)
+  await store.addSubscription('dev1', realishSub(1), 'en')
+  // first cycle fails to deliver: the subscription is kept and marked failed
+  let tasksNow = () => taskWith('s1', 'NEEDS_USER', 1)
+  const failing = createPushController({
+    tasks: () => tasksNow(),
+    store,
+    isDeviceValid: async () => true,
+    options: { push: { done: false, intervalSeconds: 10 } },
+    log: () => {},
+    sender: async () => ({ status: 'failed', error: 'http 500' }),
+  })
+  const t0 = Date.now()
+  await failing.tick(t0)
+  let sub = (await store.subscriptions())[0]
+  assert.equal(sub.lastDeliveredAt, null)
+  assert.equal(sub.lastError, 'http 500')
+  assert.ok(sub.lastErrorAt >= t0, 'the failure time is recorded')
+  // next cycle delivers: success clears the error and stamps the delivery time
+  tasksNow = () => taskWith('s1', 'NEEDS_USER', 2)
+  const ok = createPushController({
+    tasks: () => tasksNow(),
+    store,
+    isDeviceValid: async () => true,
+    options: { push: { done: false, intervalSeconds: 10 } },
+    log: () => {},
+    sender: async () => ({ status: 'sent' }),
+  })
+  await ok.tick(t0 + 10 * 60 * 1000)
+  sub = (await store.subscriptions())[0]
+  assert.ok(sub.lastDeliveredAt >= t0 + 10 * 60 * 1000, 'a delivered push stamps lastDeliveredAt')
+  assert.equal(sub.lastError, null, 'a success clears the recorded error')
+  assert.equal(sub.lastErrorAt, null)
 })

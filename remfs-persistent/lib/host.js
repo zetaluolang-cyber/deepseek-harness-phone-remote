@@ -12,8 +12,9 @@ import { ensurePairingCode, rotatePairingCode, verifyDevice, readRemfsOptions, l
 import { createDispatcher } from './dispatch.js'
 import { createPresenceService } from './presence/service.js'
 import { createPocketHandler } from './presence/pocket.js'
-import { createPushStore, normalizeSubscription } from './push/store.js'
+import { createPushStore, pushStatusForDevice } from './push/store.js'
 import { createPushController } from './push/controller.js'
+import { handlePushSubscribeRequest } from './push/subscribe.js'
 import { sendPush } from './push/webpush.js'
 import { createHttpHandlers } from './push/http.js'
 import { SERVICE_WORKER_SOURCE } from './push/sw.js'
@@ -216,12 +217,18 @@ export default {
           String(d.id) === String(deviceId) && deviceHasCapability(d, 'files'))
       } catch { return false }
     }
+    // push.subscribe policy (1.2/1.4) lives in the unit-tested
+    // handlePushSubscribeRequest: shape check, endpoint allowlist (https +
+    // KNOWN_PUSH_HOSTS + operator pushEndpointAllow), best-effort origin
+    // reachability probe (warning only, never a hard failure), then persist.
+    // The operator allowlist comes from the same remfs-options.json the push
+    // dispatcher options come from.
     const pushSubscribe = async (device, payload) => {
-      const sub = normalizeSubscription(payload && payload.subscription)
-      if (!sub) return pocketErr('bad-request', 'push.subscribe: invalid subscription payload')
       try {
-        await pushStore.addSubscription(device.id, sub, payload && payload.lang)
-        return { ok: true, value: { subscribed: true, endpoint: sub.endpoint } }
+        return await handlePushSubscribeRequest({
+          extraAllow: (remfsOptions && remfsOptions.pushEndpointAllow) || [],
+          addSubscription: (deviceId, sub, lang) => pushStore.addSubscription(deviceId, sub, lang),
+        }, device, payload)
       } catch (e) {
         return pocketErr('store-write-failed', 'push.subscribe: ' + String((e && e.message) || e))
       }
@@ -233,6 +240,17 @@ export default {
         return { ok: true, value: r }
       } catch (e) {
         return pocketErr('store-write-failed', 'push.unsubscribe: ' + String((e && e.message) || e))
+      }
+    }
+    // push.status (1.3): delivery health for the CALLING device's own
+    // subscriptions (owner-scoped). Added 2026-08 — the v1 freeze allows
+    // adding operations; no new error codes are introduced.
+    const pushStatus = async (device) => {
+      try {
+        const subs = await pushStore.subscriptions()
+        return { ok: true, value: { subscriptions: pushStatusForDevice(subs, device.id) } }
+      } catch (e) {
+        return pocketErr('store-write-failed', 'push.status: ' + String((e && e.message) || e))
       }
     }
     // push.test: send an immediate test notification to the CALLER's own
@@ -262,6 +280,8 @@ export default {
             vapid, subject, extra: { ttlSeconds: 300, urgency: 'high' },
           })
           if (r.status === 'gone') { try { await pushStore.removeSubscription(device.id, sub.endpoint) } catch { /* ignore */ } }
+          else if (r.status === 'sent') { try { await pushStore.recordSendOutcome(sub.endpoint, { deliveredAt: Date.now() }) } catch { /* ignore */ } }
+          else if (r.status === 'failed') { try { await pushStore.recordSendOutcome(sub.endpoint, { error: String(r.error || r.httpStatus || 'send failed'), errorAt: Date.now() }) } catch { /* ignore */ } }
           results.push({ endpoint: sub.endpoint, status: r.status, httpStatus: r.httpStatus || null, error: r.error ? String(r.error) : null })
         }
         return { ok: true, value: { sent: results.filter((x) => x.status === 'sent').length, results } }
@@ -276,6 +296,7 @@ export default {
       pocketStrict: remfsOptions.pocketStrict,
       pushSubscribe,
       pushUnsubscribe,
+      pushStatus,
       pushTest,
     })
 

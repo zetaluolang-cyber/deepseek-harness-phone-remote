@@ -11,7 +11,7 @@ import { UNAUTH_TITLE, redactTaskDTO, redactTasksValue, redactTasksEnvelope } fr
 const okEnv = (value) => ({ ok: true, value })
 
 function makeHandler(over = {}) {
-  const calls = { subscribe: 0, unsubscribe: 0, test: 0 }
+  const calls = { subscribe: 0, unsubscribe: 0, test: 0, status: 0 }
   const handler = createPocketHandler({
     presence: {
       status: (device) => okEnv({ who: device ? device.id : null }),
@@ -21,6 +21,7 @@ function makeHandler(over = {}) {
     pocketStrict: over.pocketStrict || false,
     pushSubscribe: async () => { calls.subscribe++; return okEnv({ subscribed: true }) },
     pushUnsubscribe: async () => { calls.unsubscribe++; return okEnv({ removed: 1 }) },
+    pushStatus: async () => { calls.status++; return okEnv({ subscriptions: [] }) },
     pushTest: async () => { calls.test++; return okEnv({ sent: 1, results: [] }) },
     ...over.deps,
   })
@@ -59,6 +60,24 @@ test('pocket: push.test is files-gated like subscribe (content probe parity)', a
   // never inside the unauthenticated fence
   const noAuth = makeHandler({ verifyDevice: async () => ({ error: 'auth-invalid' }) })
   assert.equal((await noAuth.handler('push.test', {})).error.code, 'auth-invalid')
+})
+
+test('pocket: push.status (delivery health) is files-gated and reaches the handler', async () => {
+  const ok = makeHandler()
+  const r = await ok.handler('push.status', { deviceId: 'd1', credential: 'c' })
+  assert.equal(r.ok, true)
+  assert.deepEqual(r.value, { subscriptions: [] })
+  assert.equal(ok.calls.status, 1)
+  // a device narrowed away from files may not read delivery health
+  const narrowed = makeHandler({
+    verifyDevice: async () => ({ ok: true, device: { id: 'd2', capabilities: ['device-admin'] } }),
+  })
+  const denied = await narrowed.handler('push.status', { deviceId: 'd2', credential: 'c' })
+  assert.equal(denied.error.code, 'capability-denied')
+  assert.equal(narrowed.calls.status, 0)
+  // never inside the unauthenticated fence
+  const noAuth = makeHandler({ verifyDevice: async () => ({ error: 'auth-invalid' }) })
+  assert.equal((await noAuth.handler('push.status', {})).error.code, 'auth-invalid')
 })
 
 test('pocket: unsubscribe is NOT capability-gated - a narrowed device may always clean up', async () => {

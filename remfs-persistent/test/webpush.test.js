@@ -21,6 +21,7 @@ import {
   encryptPayload,
   encryptWithEcdh,
   sendPush,
+  probeEndpointOrigin,
 } from '../lib/push/webpush.js'
 
 // ------------------------------------------------------------------ VAPID
@@ -208,4 +209,41 @@ test('sendPush: maps 404/410 to gone and network errors to failed', async () => 
   const r2 = await sendPush({ ...base, fetchImpl: async () => { throw new Error('ECONNREFUSED') } })
   assert.equal(r2.status, 'failed')
   assert.match(r2.error, /network/)
+})
+
+// -------------------------------------------------------------- 1.4 probe
+
+test('probeEndpointOrigin: any HTTP answer proves the origin is reachable', async () => {
+  const calls = []
+  const probe = await probeEndpointOrigin('https://fcm.googleapis.com/fcm/send/x', {
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init })
+      // Push services routinely answer OPTIONS with 403/405 - ANY response
+      // means the host can reach the origin.
+      return { status: 403 }
+    },
+  })
+  assert.deepEqual(probe, { reachable: true })
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].url, 'https://fcm.googleapis.com', 'probe targets the ORIGIN, not the endpoint path')
+  assert.equal(calls[0].init.method, 'OPTIONS')
+  assert.ok(calls[0].init.signal, 'probe must carry a timeout signal')
+})
+
+test('probeEndpointOrigin: network failure / timeout reports unreachable with a reason', async () => {
+  const r1 = await probeEndpointOrigin('https://fcm.googleapis.com/fcm/send/x', {
+    fetchImpl: async () => { throw new Error('ECONNREFUSED') },
+  })
+  assert.equal(r1.reachable, false)
+  assert.match(r1.reason, /ECONNREFUSED/)
+
+  const r2 = await probeEndpointOrigin('https://fcm.googleapis.com/fcm/send/x', {
+    fetchImpl: async () => { const e = new Error('The operation was aborted'); e.name = 'TimeoutError'; throw e },
+  })
+  assert.equal(r2.reachable, false)
+  assert.match(r2.reason, /timeout|timed out/i)
+
+  const r3 = await probeEndpointOrigin('not-a-url')
+  assert.equal(r3.reachable, false)
+  assert.match(r3.reason, /invalid endpoint/)
 })

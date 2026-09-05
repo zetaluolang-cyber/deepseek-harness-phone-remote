@@ -12,6 +12,7 @@ import { promises as fsp } from 'node:fs'
 import { realpathSync } from 'node:fs'
 import { createDispatcher } from '../lib/dispatch.js'
 import { ensurePairingCode, pairDevice } from '../lib/security.js'
+import { SERVICE_WORKER_SOURCE } from '../lib/push/sw.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const CLIENT_SRC = readFileSync(path.join(HERE, '..', 'lib', 'client.js'), 'utf8')
@@ -159,6 +160,56 @@ test('client source: upload reads raw bytes and rejects non-UTF-8 (encoding guar
   assert.match(CLIENT_SRC, /encNotUtf8/, 'client must surface the non-UTF-8 message')
   assert.match(CLIENT_SRC, /encoding-not-utf8/, 'client friendlyErr must map the dispatcher code')
   assert.match(CLIENT_SRC, /encHasUtf8Bom\(bytes\)[\s\S]*?\\uFEFF/, 'a UTF-8 BOM must be preserved on upload')
+})
+
+// 1.1: the browser notification poll must mirror the host dispatcher's dedupe:
+// a page-lifetime map keyed on sessionId:STATE:turnCycle plus a per-session
+// 2-minute cooldown map, so a repeat NEEDS_USER/FAILED after a NEW user turn
+// re-alerts while the same cycle stays suppressed.
+test('client source: notification poll dedupes on sessionId:state:turnCycle with a per-session cooldown', () => {
+  assert.match(CLIENT_SRC, /taskNotifyCycle/, 'client must normalize the task turnCycle')
+  assert.match(CLIENT_SRC, /task\.sessionId\s*\+\s*':'/, 'client must key notifications on sessionId:state:turnCycle')
+  assert.match(CLIENT_SRC, /NOTIFY_COOLDOWN_MS\s*=\s*2\s*\*\s*60\s*\*\s*1000/, 'client must enforce the 2-minute cooldown')
+  assert.match(CLIENT_SRC, /notifiedAtBySession/, 'client must track per-session last-alert times')
+  assert.match(CLIENT_SRC, /notifiedKeys/, 'client must keep a page-lifetime dedupe map')
+})
+
+// 1.3: the Devices pane must ask push.status (owner-scoped delivery health)
+// and render a per-device delivery line only when data exists.
+test('client source: Devices pane reads push.status and renders a push delivery line', () => {
+  assert.match(CLIENT_SRC, /'push\.status'/, 'client must call the push.status operation')
+  assert.match(CLIENT_SRC, /loadPushHealth/, 'client must load delivery health when the Devices pane opens')
+  assert.match(CLIENT_SRC, /pushDeliveryLines/, 'client must render per-device delivery lines')
+  assert.match(CLIENT_SRC, /lastDeliveredAt/, 'delivery line must use lastDeliveredAt')
+  assert.match(CLIENT_SRC, /lastError/, 'delivery line must surface lastError')
+})
+
+// 1.5: the deep-link mechanism must consume the SW's Cache-API flag on page
+// load and open the EXISTING session (never a replacement); the SW must stash
+// the sessionId on notificationclick and tell an open window via postMessage.
+test('client source: notification deep-link consumes the push-target flag and opens the session', () => {
+  assert.match(CLIENT_SRC, /remfs-push-target/, 'client must know the push-target flag key')
+  assert.match(CLIENT_SRC, /consumePushTarget/, 'client must read the target once on page load')
+  assert.match(CLIENT_SRC, /clearPushTargetFlag/, 'client must clear the flag after consuming it')
+  assert.match(CLIENT_SRC, /type === 'remfs-push-target'/, 'client must handle the SW postMessage')
+  const handoff = CLIENT_SRC.slice(CLIENT_SRC.indexOf('__remfsSessionsApi'))
+  assert.doesNotMatch(handoff, /fork\(|create\(/,
+    'deep-link must never create a replacement session')
+  // no URL routing anywhere: the deep-link is the flag + sessions.open design
+  assert.match(CLIENT_SRC, /sessions\.open\(/, 'deep-link opens via ctx.sessions.open(id)')
+})
+
+test('service worker source: notificationclick stashes sessionId and opens/focuses the GUI', () => {
+  // the push payload's sessionId must be carried into the notification data
+  assert.match(SERVICE_WORKER_SOURCE, /data:\s*\{ url: data\.url \|\| '\/', sessionId: data\.sessionId \|\| '' \}/,
+    'the SW must keep the sessionId in the notification data')
+  // click path: stash (Cache-API flag), focus an existing window with a
+  // postMessage, or open the GUI for a cold start
+  assert.match(SERVICE_WORKER_SOURCE, /remfs-persistent-push-v1/, 'SW stashes into the push-target cache')
+  assert.match(SERVICE_WORKER_SOURCE, /remfs-push-target/, 'SW stashes under the push-target key')
+  assert.match(SERVICE_WORKER_SOURCE, /postMessage\(\{ type: 'remfs-push-target'/, 'open window is told the session id')
+  assert.match(SERVICE_WORKER_SOURCE, /clients\.openWindow\(url\)/, 'cold start opens the GUI')
+  assert.match(SERVICE_WORKER_SOURCE, /notificationclick/, 'the SW handles notification clicks')
 })
 
 async function setup() {

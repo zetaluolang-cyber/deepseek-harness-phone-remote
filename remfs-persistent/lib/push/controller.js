@@ -1,15 +1,48 @@
 // push/controller.js — presence-driven Web Push dispatcher.
 //
 // The presence service has no event stream (the UI polls every 8s), so the
-// dispatcher does the same: poll presence.tasks(), diff (sessionId:STATE)
-// against the persisted dedupe map, and push NEEDS_USER / FAILED (always) and
-// DONE (when enabled via remfs-options.json push.done). Notifications are
-// delivered only to paired devices' subscriptions; the host composes the
-// localized title/body so the Service Worker stays dumb and private.
+// dispatcher does the same: poll presence.tasks(), diff against the persisted
+// dedupe map, and push NEEDS_USER / FAILED (always) and DONE (when enabled via
+// remfs-options.json push.done). Notifications are delivered only to paired
+// devices' subscriptions; the host composes the localized title/body so the
+// Service Worker stays dumb and private.
+//
+// Dedupe (1.1): keys are sessionId:STATE:turnCycle triples (turnCycle = the
+// task DTO's user-role message count) persisted for 7 days, PLUS an in-memory
+// per-session 2-minute cooldown. A repeat NEEDS_USER (multi-approval) or
+// FAILED -> RUNNING -> FAILED re-notifies once the user started a NEW turn
+// (turnCycle changed) or the cooldown elapsed; the same event inside one turn
+// never spams. Send outcomes are recorded on each subscription (1.3) so the
+// owning device can see "last delivered / last error" via /pocket push.status.
 import { sendPush } from './webpush.js'
 
 const NOTIFY_ALWAYS = new Set(['NEEDS_USER', 'FAILED'])
 const PRUNE_EVERY_MS = 60 * 1000
+/** Per-session cooldown: never push the same session twice within this window
+ *  (repeated cycles must not spam), independent of the triple dedupe map. */
+export const SESSION_PUSH_COOLDOWN_MS = 2 * 60 * 1000
+
+/** Clamp a task turnCycle to a finite non-negative integer (0 when absent). */
+export function normalizeTurnCycle(raw) {
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0
+}
+
+/** Build the localized JSON push payload for one task (exported for tests so
+ *  the sessionId the Service Worker deep-links into is pinned). */
+export function buildPushPayload(task, labels) {
+  const state = String(task.state || '')
+  const sessionId = String(task.sessionId || task.taskId || '')
+  const title = labels[state] || labels.FALLBACK
+  const bodyParts = [task.title, task.summary].filter(Boolean)
+  return JSON.stringify({
+    title,
+    body: bodyParts.join(' — '),
+    tag: 'remfs-push-' + sessionId,
+    url: '/',
+    sessionId,
+  })
+}
 
 function labelsFor(lang) {
   return lang === 'zh'
@@ -20,7 +53,8 @@ function labelsFor(lang) {
 /**
  * @param {Object} deps
  * @param {() => Promise<{ok:boolean,value?:{tasks:Array}}>} deps.tasks
- * @param {Object} deps.store - push store (alreadyPushed/markPushed/subscriptions/removeSubscription/pruneRevoked).
+ * @param {Object} deps.store - push store (alreadyPushed/markPushed/
+ *   recordSendOutcome/subscriptions/removeSubscription/pruneRevoked).
  * @param {(deviceId: string) => Promise<boolean>} deps.isDeviceValid - device-store membership check for pruning.
  * @param {{push:{done:boolean, intervalSeconds:number}}} deps.options
  * @param {(msg: string) => void} [deps.log=console.log]
@@ -42,6 +76,9 @@ export function createPushController(deps) {
   let timer = null
   let running = false
   let lastPrune = 0
+  // Per-session cooldown (in-memory; the persisted triple dedupe map survives
+  // restarts): last tick time a push was dispatched for each sessionId.
+  const lastPushAt = new Map()
   // Cached task snapshot: presence.tasks() decompresses every persisted
   // session log (zstd) and can take tens of seconds with real data, so the
   // dispatcher refreshes this snapshot once per cycle and the HTTP presence
@@ -77,22 +114,22 @@ export function createPushController(deps) {
         if (!sessionId) continue
         const notify = NOTIFY_ALWAYS.has(state) || (doneEnabled && state === 'DONE')
         if (!notify) continue
-        const key = sessionId + ':' + state
+        // 1.1: dedupe on sessionId:STATE:turnCycle so a repeat NEEDS_USER /
+        // FAILED re-notifies after a NEW user turn (cycle changed) while the
+        // same cycle stays suppressed for 7 days.
+        const cycle = normalizeTurnCycle(task.turnCycle)
+        const key = sessionId + ':' + state + ':' + cycle
         if (await store.alreadyPushed(key)) continue
+        // Per-session cooldown: do NOT mark the triple while suppressed — the
+        // next cycle retries the same pending event once the window elapses.
+        const lastSessionPush = lastPushAt.get(sessionId) || 0
+        if (now - lastSessionPush < SESSION_PUSH_COOLDOWN_MS) continue
 
         // One push per subscription; the title/body are localized per device.
         let sentAny = false
         for (const sub of subs) {
           const labels = labelsFor(sub.lang)
-          const title = labels[state] || labels.FALLBACK
-          const bodyParts = [task.title, task.summary].filter(Boolean)
-          const payload = JSON.stringify({
-            title,
-            body: bodyParts.join(' — '),
-            tag: 'remfs-push-' + sessionId,
-            url: '/',
-            sessionId,
-          })
+          const payload = buildPushPayload(task, labels)
           // sendPush takes ONE options object. This call was positional until
           // 2026-08 — every argument landed in `opts` as a bare string, so the
           // dispatcher had never delivered a single real push; the cycle-level
@@ -112,17 +149,27 @@ export function createPushController(deps) {
           if (result.status === 'sent') {
             sentAny = true
             pushed += 1
+            // Delivery health (1.3): a successful attempt stamps the last
+            // delivery time and clears any prior error on this subscription.
+            await store.recordSendOutcome(sub.endpoint, { deliveredAt: now })
           } else if (result.status === 'gone') {
             // Endpoint expired (404/410): drop it, never retry.
             await store.removeSubscription(sub.deviceId, sub.endpoint)
             log('dropped expired subscription ' + sub.endpoint)
           } else {
+            // Failure keeps the subscription but is recorded so push.status
+            // can show the owning device why delivery is failing.
+            await store.recordSendOutcome(sub.endpoint, {
+              error: String(result.error || result.httpStatus || 'send failed'),
+              errorAt: now,
+            })
             log('send failed (' + String(result.error || result.httpStatus) + ') ' + sub.endpoint)
           }
         }
         // Dedupe even when nothing was deliverable (avoids retry storms on a
         // temporarily failing push service; the 7-day prune bounds the map).
         await store.markPushed(key, now)
+        lastPushAt.set(sessionId, now)
         if (sentAny) log(state + ' pushed for ' + sessionId + (task.title ? ' (' + task.title + ')' : ''))
       }
 
