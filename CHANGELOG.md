@@ -2,7 +2,7 @@
 
 All notable changes to `@zetaluolang/remfs-persistent` and the deploy package.
 
-## Unreleased
+## [1.3.2] — 2026-08 (push delivery + P0 review hardening)
 
 - **Push dispatcher actually delivers (P0 fix)** — the dispatcher called
   `sendPush` with positional arguments while it takes one options object, so
@@ -67,6 +67,31 @@ All notable changes to `@zetaluolang/remfs-persistent` and the deploy package.
   included.
 - **Auth-store write guard** — the throttled `lastSeen` path now has a real
   no-write assertion and self-heals future timestamps after clock rollback.
+- **P0 review hardening (security)** — the file-access allowlist
+  (`.remfs-roots.json` and its writer tmp variants) is now hard-denied on
+  every generic read/write/list path, closing the self-widening hole where a
+  paired device could rewrite its own root list; new pairings default to
+  `files` only (`device-admin` is a PC-side store grant); unauthenticated
+  presence responses now redact task titles/summaries while keeping the
+  frozen v1 DTO shape; the security store, pairing code file, corrupt-store
+  backups and the push store (VAPID key) are written `0o600`, and the
+  plaintext pairing code is no longer logged.
+- **P0 review hardening (ops)** — `Start-Process -ArgumentList` calls now go
+  through `ConvertTo-ArgLine` (one quote pair per token, single string): on
+  Windows PowerShell 5.1 raw arrays and doubled-quote styles both split
+  paths containing spaces, so a spaced `%USERPROFILE%` would silently break
+  the launcher (empirically verified). `install.ps1` now disarms the
+  watchdog scheduled task before stopping the live stack and re-arms it on
+  success or fatal failure (trap-backed), so a mid-install watchdog relaunch
+  can no longer race the deploy.
+- **P0 review hardening (presence engine)** — the system heartbeat now means
+  "the harness process is alive and answering" (marked on every successful
+  presence call) instead of "the last session event was recent": quiet
+  NEEDS_USER / FAILED / DONE sessions no longer decay to DISCONNECTED after
+  ~60 s, empty and old persisted sessions read IDLE while the system is
+  alive, and DISCONNECTED is reserved for a stale engine heartbeat or a
+  genuinely orphaned session loop. The Task Board gains a real Disconnected
+  group instead of lumping those sessions under "Not Started".
 
 ## [1.3.1] — 2026-08 (orb polish + instant presence)
 

@@ -15,17 +15,20 @@
 // verifyDevice/revokeDevice/pairDevice calls cannot resurrect a revoked
 // credential or double-consume a pairing code.
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import { mkdir, readFile, writeFile, rename, copyFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
 // ---------------------------------------------------------------- constants
 
-// Default capabilities for a newly paired device. `approval` was written by
-// older releases after the Pocket Cockpit was removed, but no endpoint ever
-// enforced it. It is migrated in memory to the explicit `device-admin` grant.
-export const DEFAULT_DEVICE_CAPABILITIES = Object.freeze(['files', 'device-admin'])
+// Least-privilege default: a NEWLY paired device receives `files` ONLY
+// (files/workspaces). `device-admin` (device management) is a PC-side grant:
+// it must be added to the device entry in ~/.dsh/remfs-security.json on the
+// PC - it is never granted at pair time. The obsolete `approval` name written
+// by older releases (no endpoint ever enforced it) still migrates in memory to
+// the explicit `device-admin` grant for EXISTING store entries.
+export const DEFAULT_DEVICE_CAPABILITIES = Object.freeze(['files'])
 
 export const PAIRING_TTL_MS = 10 * 60 * 1000 // pairing code validity
 export const CREDENTIAL_BYTES = 32 // long-term device credential (256-bit)
@@ -58,10 +61,15 @@ export const DENY_SEGMENTS = new Set([
 // System32/SysWOW64 (system files, drivers, binaries).
 export const HARD_DENY_SEGMENTS = new Set(['windows', 'system32', 'syswow64'])
 
-// HARD-DENY file patterns: credentials, private keys and system files. These
-// are NEVER reachable even when the parent protected directory (e.g. .ssh,
-// .aws) is registered as a workspace.
-export const DENY_FILE = /(^|[/\\])\.ssh([/\\]|$)|(^|[/\\])\.git([/\\]|$)|(^|[/\\])\.aws([/\\]|$)|(^|[/\\])\.gnupg([/\\]|$)|(^|[/\\])\.config[/\\]gcloud([/\\]|$)|(^|[/\\])\.env(\.[a-z0-9_-]+)?$|(^|[/\\])id_(rsa|ed25519|dsa|ecdsa)(\.pub)?$|\.(pem|key|pfx|p12)$|(^|[/\\])\.credentials\.ya?ml$|(^|[/\\])remfs-companion-token$|(^|[/\\])ntuser\.dat$|^[A-Za-z]:[/\\](sam|system|security)(\.|$)/i
+// HARD-DENY file patterns: credentials, private keys, system files AND the
+// remfs allowlist file itself (.remfs-roots.json, plus writer tmp variants).
+// These are NEVER reachable even when the parent protected directory (e.g.
+// .ssh, .aws) is registered as a workspace. The allowlist deny (F8) closes a
+// self-widening hole: .remfs-roots.json lives inside the default allowed root,
+// so without this rule a paired device could overwrite it through the generic
+// `write` RPC and grant itself any location. Only the sanctioned setAllowed
+// path (dispatch.js -> adapter.writeAllowedFile) may touch it.
+export const DENY_FILE = /(^|[/\\])\.ssh([/\\]|$)|(^|[/\\])\.git([/\\]|$)|(^|[/\\])\.aws([/\\]|$)|(^|[/\\])\.gnupg([/\\]|$)|(^|[/\\])\.config[/\\]gcloud([/\\]|$)|(^|[/\\])\.env(\.[a-z0-9_-]+)?$|(^|[/\\])id_(rsa|ed25519|dsa|ecdsa)(\.pub)?$|\.(pem|key|pfx|p12)$|(^|[/\\])\.credentials\.ya?ml$|(^|[/\\])remfs-companion-token$|(^|[/\\])\.remfs-roots\.json(\.[^/\\]*)?$|(^|[/\\])ntuser\.dat$|^[A-Za-z]:[/\\](sam|system|security)(\.|$)/i
 
 export const ERR = {
   AUTH_REQUIRED: 'auth-required',
@@ -213,8 +221,12 @@ export function safeEqualHex(a, b) {
 }
 
 /** Normalize persisted capabilities without silently widening an explicit
- * empty/restricted list. Missing lists are legacy and receive the defaults;
- * the obsolete `approval` name migrates to `device-admin`. */
+ * empty/restricted list. Missing lists are LEGACY store entries (pre-dating
+ * the capability field) and receive the current minimal default; the obsolete
+ * `approval` name migrates to `device-admin`. This migration only ever applies
+ * to EXISTING devices: every fresh pair stores an explicit capabilities
+ * array (DEFAULT_DEVICE_CAPABILITIES), so a new device can never receive
+ * `device-admin` through this path (F9). */
 export function normalizeDeviceCapabilities(value) {
   const source = Array.isArray(value) ? value : DEFAULT_DEVICE_CAPABILITIES
   const out = []
@@ -306,11 +318,13 @@ async function loadStore(file) {
 }
 
 /** Copy a corrupt store aside for inspection. The original stays in place so
- *  the store keeps failing closed (never silently resets to a fresh state). */
+ *  the store keeps failing closed (never silently resets to a fresh state).
+ *  The backup is written 0o600 like the store itself (F1). */
 async function backupCorrupt(file) {
   try {
     await mkdir(path.dirname(file), { recursive: true })
-    await copyFile(file, file + '.corrupt-' + Date.now())
+    const bad = await readFile(file)
+    await writeFile(file + '.corrupt-' + Date.now(), bad, { mode: 0o600 })
   } catch { /* best-effort */ }
 }
 
@@ -331,11 +345,13 @@ function withStoreGuard(file, fn) {
   })
 }
 
-/** Atomic replace: write tmp then rename (same volume => atomic on Windows). */
+/** Atomic replace: write tmp then rename (same volume => atomic on Windows).
+ *  tmp is created 0o600 and rename() replaces the destination with that inode,
+ *  so the store file is never world-readable (F1). */
 async function saveStore(file, store) {
   await mkdir(path.dirname(file), { recursive: true })
   const tmp = file + '.tmp'
-  await writeFile(tmp, JSON.stringify(store, null, 2), 'utf8')
+  await writeFile(tmp, JSON.stringify(store, null, 2), { encoding: 'utf8', mode: 0o600 })
   await rename(tmp, file)
 }
 
@@ -348,10 +364,15 @@ function withStoreLock(file, fn) {
   return next
 }
 
+/** Write the pairing .txt atomically (tmp + rename) at 0o600 - it carries the
+ *  PLAINTEXT pairing code, so it must never be world-readable (F1). Failure is
+ *  tolerated: the display file is best-effort only. */
 async function writePairingTxt(text) {
   try {
     await mkdir(path.dirname(text.file), { recursive: true })
-    await writeFile(text.file, text.body, 'utf8')
+    const tmp = text.file + '.tmp'
+    await writeFile(tmp, text.body, { encoding: 'utf8', mode: 0o600 })
+    await rename(tmp, text.file)
   } catch { /* display is best-effort */ }
 }
 
@@ -455,8 +476,10 @@ export async function pairDevice(code, deviceName, file = securityFile()) {
       createdAt: new Date().toISOString(),
       lastSeen: new Date().toISOString(),
       credentialHash: sha256(credential),
-      // Capability model: new devices can use files/workspaces and manage
-      // paired devices. PC-local store edits may narrow this list.
+      // Least-privilege grant (F9): a new device can use files/workspaces
+      // only. `device-admin` is a PC-side grant - edit the security store on
+      // the PC to add it (the legacy migration never fires for this device
+      // because the capabilities array is explicit here).
       capabilities: DEFAULT_DEVICE_CAPABILITIES.slice(),
     })
     await saveStore(file, store)

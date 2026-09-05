@@ -17,7 +17,7 @@ import os from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { zstdDecompressSync } from 'node:zlib'
 
-import { foldHeartbeats } from '../lib/presence/heartbeat.js'
+import { foldHeartbeats, effectiveSystemAliveAt } from '../lib/presence/heartbeat.js'
 import { resolveState } from '../lib/presence/state.js'
 import { summarize, staleReasonLines } from '../lib/presence/summary.js'
 import {
@@ -25,7 +25,7 @@ import {
   highestPriorityTask,
 } from '../lib/presence/contract.js'
 import {
-  hasPendingApproval, terminalFailure, completed, agentRunning,
+  hasPendingApproval, terminalFailure, completed, agentRunning, hasOpenTurn,
   titleFromEvents, fileChangeCount, firstTime, lastTime,
 } from '../lib/presence/service.js'
 
@@ -127,13 +127,19 @@ export function loadSessionsDir(dir, max = 500) {
  * Aggregate real session logs into presence task DTOs — same derivation the
  * live AgentPresenceService uses (heartbeat folding, resolveState, summaries).
  * @param {Array} sessions - output of loadSessionsDir().
- * @param {Object} [opts] - { now, staleMinutes, liveIds }
+ * @param {Object} [opts] - { now, staleMinutes, liveIds, systemAliveAt }
  * @returns {Array} sorted task DTOs (single source of truth).
  */
 export function buildTasks(sessions, opts = {}) {
   const now = opts.now != null ? opts.now : Date.now()
   const staleMs = normalizeStaleMs(opts.staleMinutes)
   const live = new Set(opts.liveIds || [])
+  // Offline the engine cannot have answered, so the scan time stands in for
+  // engine aliveness (an offline scan is itself proof the host machine runs);
+  // callers that know the harness is down can pass an old opts.systemAliveAt
+  // to reproduce the all-DISCONNECTED snapshot. Per-session DISCONNECTED via
+  // the orphaned-open-turn rule is derived exactly as the live service does.
+  const systemAliveAt = opts.systemAliveAt != null ? opts.systemAliveAt : now
   // per-session dedup maps (see service.js: identical tool calls in DIFFERENT
   // sessions are independent progress)
   const seenBySession = new Map()
@@ -143,14 +149,25 @@ export function buildTasks(sessions, opts = {}) {
     let seen = seenBySession.get(s.sessionId)
     if (!seen) { seen = new Map(); seenBySession.set(s.sessionId, seen) }
     const hb = foldHeartbeats(events, { now, seen })
+    const loopLive = live.has(s.sessionId)
+    // System heartbeat = engine liveness (effectiveSystemAliveAt), shared by
+    // every reachable session. Only an orphaned open turn (open turn + not
+    // live + log silent beyond the TTL) reports DISCONNECTED.
+    const sysHeartbeatAt = effectiveSystemAliveAt({
+      sessionHeartbeatAt: hb.systemHeartbeatAt,
+      openTurn: hasOpenTurn(events),
+      loopLive,
+      systemAliveAt,
+      now,
+    })
     const pending = hasPendingApproval(events)
     const failed = terminalFailure(events)
     const done = completed(events)
-    const running = agentRunning(events, live.has(s.sessionId))
+    const running = agentRunning(events, loopLive)
 
     const staleReasons = []
     const state = resolveState({
-      systemHeartbeatAt: hb.systemHeartbeatAt,
+      systemHeartbeatAt: sysHeartbeatAt,
       progressHeartbeatAt: hb.progressHeartbeatAt,
       pendingApproval: pending,
       terminalFailure: failed,
@@ -173,7 +190,7 @@ export function buildTasks(sessions, opts = {}) {
       title,
       state,
       summary,
-      systemHeartbeatAt: hb.systemHeartbeatAt ? new Date(hb.systemHeartbeatAt).toISOString() : null,
+      systemHeartbeatAt: sysHeartbeatAt ? new Date(sysHeartbeatAt).toISOString() : null,
       progressHeartbeatAt: hb.progressHeartbeatAt ? new Date(hb.progressHeartbeatAt).toISOString() : null,
       startedAt,
       updatedAt,

@@ -108,7 +108,7 @@ test('dogfood: buildTasks derives RUNNING for an open turn with fresh progress',
   const tasks = buildTasks([mkSession('s-run', [
     ev('turn/start', { turn: 1 }, now - 1000),
     ev('tool/result', { name: 'bash', message: { content: 'ok' } }, now - 500),
-  ], now - 2000)])
+  ], now - 2000)], { now, liveIds: ['s-run'] })
   assert.equal(tasks[0].state, STATE.RUNNING)
 })
 
@@ -119,15 +119,18 @@ test('dogfood: buildTasks derives STALE + explainable reason, then recovery', ()
     ev('turn/start', { turn: 1 }, past),
     ev('tool/result', { name: 'bash', message: { content: 'ok' } }, past + 500),
   ]
-  // system heartbeat stays fresh via plain chunks; progress is 21m old
-  const stale = [...base, ev('assistant/chunk', { chunk: { type: 'text', text: 'x' } }, now - 1000)]
-  const tasks1 = buildTasks([mkSession('s-stale', stale, past)], { now })
+  // The agent claims running (live session) but produced no meaningful
+  // progress for 21m. Offline scans assume the engine is alive (the scan is
+  // proof the host runs), so no chunk hack is needed to keep a system
+  // heartbeat fresh - the system heartbeat is engine liveness, never the
+  // last event time.
+  const tasks1 = buildTasks([mkSession('s-stale', base, past)], { now, liveIds: ['s-stale'] })
   assert.equal(tasks1[0].state, STATE.STALE)
   assert.ok(tasks1[0].staleReason && tasks1[0].staleReason.length > 0,
     'STALE must carry explainable facts: ' + JSON.stringify(tasks1[0].staleReason))
   // fresh meaningful progress (different tool+args) recovers to RUNNING
-  const recovered = [...stale, ev('tool/result', { name: 'edit', arguments: '{"path":"new.txt"}' }, now - 500)]
-  const tasks2 = buildTasks([mkSession('s-stale', recovered, past)], { now })
+  const recovered = [...base, ev('tool/result', { name: 'edit', arguments: '{"path":"new.txt"}' }, now - 500)]
+  const tasks2 = buildTasks([mkSession('s-stale', recovered, past)], { now, liveIds: ['s-stale'] })
   assert.equal(tasks2[0].state, STATE.RUNNING)
 })
 
@@ -137,7 +140,7 @@ test('dogfood: buildTasks derives FAILED only from a CLOSED error turn', () => {
   const open = buildTasks([mkSession('s-open', [
     ev('turn/start', { turn: 1 }, now - 1000),
     ev('tool/result', { name: 'pwsh', error: { code: '1' } }, now - 500),
-  ], now - 2000)])
+  ], now - 2000)], { now, liveIds: ['s-open'] })
   assert.equal(open[0].state, STATE.RUNNING)
   // closed error turn -> FAILED
   const closed = buildTasks([mkSession('s-fail', [
@@ -153,16 +156,19 @@ test('dogfood: buildTasks derives DONE / IDLE / DISCONNECTED', () => {
   const done = buildTasks([mkSession('s-done', [
     ev('turn/start', { turn: 1 }, now - 2000),
     ev('turn/end', { turn: 1, reason: { kind: 'completed' } }, now - 1000),
-  ], now - 3000)])
+  ], now - 3000)], { now })
   assert.equal(done[0].state, STATE.DONE)
   const idle = buildTasks([mkSession('s-idle', [
     ev('sandbox/mode', { mode: 'safe' }, now - 1000),
-  ], now - 2000)])
+  ], now - 2000)], { now })
   assert.equal(idle[0].state, STATE.IDLE)
+  // ORPHANED open turn: turn/start that never closed, the session is not
+  // live, and the log has been silent past the system TTL - the per-session
+  // loop is gone, so DISCONNECTED (the live service derives the same way).
   const dead = buildTasks([mkSession('s-dead', [
     ev('turn/start', { turn: 1 }, now - 70 * 60 * 1000),
     ev('tool/result', { name: 'bash', message: { content: 'ok' } }, now - 69 * 60 * 1000),
-  ], now - 70 * 60 * 1000)])
+  ], now - 70 * 60 * 1000)], { now })
   assert.equal(dead[0].state, STATE.DISCONNECTED)
 })
 
@@ -177,7 +183,7 @@ test('dogfood: tasks sort by state priority (FAILED above RUNNING)', () => {
       ev('turn/start', { turn: 1 }, now - 1000),
       ev('turn/end', { turn: 1, reason: { kind: 'error' } }, now - 100),
     ], now - 2000),
-  ])
+  ], { now, liveIds: ['s-run'] })
   assert.equal(tasks[0].state, STATE.FAILED)
   assert.equal(tasks[1].state, STATE.RUNNING)
 })
@@ -187,7 +193,6 @@ test('dogfood: stale-min flag is honored (10m threshold)', () => {
   const tasks = buildTasks([mkSession('s-stale10', [
     ev('turn/start', { turn: 1 }, now - 11 * 60 * 1000),
     ev('tool/result', { name: 'bash', message: { content: 'ok' } }, now - 11 * 60 * 1000 + 500),
-    ev('assistant/chunk', { chunk: { type: 'text', text: 'x' } }, now - 1000),
-  ], now - 12 * 60 * 1000)], { now, staleMinutes: 10 })
+  ], now - 12 * 60 * 1000)], { now, staleMinutes: 10, liveIds: ['s-stale10'] })
   assert.equal(tasks[0].state, STATE.STALE)
 })

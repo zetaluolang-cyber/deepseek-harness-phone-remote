@@ -17,6 +17,36 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Watchdog pause/re-arm helpers (install atomicity). This installer replaces
+# the whole deployed stack (runtime, launcher, plugin, scripts). The
+# self-healing watchdog scheduled task "dsh_harness_watchdog" would otherwise
+# notice the harness going down mid-deploy and relaunch the OLD launcher while
+# the file replacement is still running, racing the deployment. So the
+# watchdog is PAUSED right before the old stack is stopped (see below), stays
+# paused for the entire deployment, and is re-armed only afterwards: on
+# success at the end of this script, or best-effort from the trap below when a
+# fatal error aborts the install first. Every watchdog call is best effort and
+# ignores failure when the task does not exist yet (first install).
+$script:watchdogTask = "dsh_harness_watchdog"
+$script:watchdogPaused = $false
+
+function Start-WatchdogBestEffort {
+    # Re-run the watchdog ONLY when this installer actually paused it and the
+    # task still exists; never start it when it was never disarmed.
+    if (-not $script:watchdogPaused) { return }
+    & schtasks /query /tn $script:watchdogTask 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        & schtasks /run /tn $script:watchdogTask 2>&1 | Out-Null
+    }
+}
+
+# Fatal-error safety net: a throw anywhere below leaves the deployment half
+# finished, so restart the watchdog (best effort) for the stack to self-heal.
+trap {
+    Start-WatchdogBestEffort
+    throw $_
+}
+
 function Resolve-CommandPath {
     param([string[]]$Candidates, [string]$CommandName)
     foreach ($candidate in $Candidates) {
@@ -186,6 +216,19 @@ $dshRoot = Join-Path $env:USERPROFILE ".dsh"
 $scriptDir = Join-Path $dshRoot "launcher"
 $profileDir = Join-Path $dshRoot "profiles\web"
 New-Item -ItemType Directory -Force -Path $scriptDir | Out-Null
+
+# Pause the watchdog scheduled task NOW, before the old stack is stopped: a
+# mid-deploy watchdog relaunch of the old launcher would race the file
+# replacement below (install atomicity). Ignored when the task does not exist.
+# The watchdog stays paused for the whole deployment and is re-armed at the
+# end of this script (success) or by the top-of-script trap (fatal failure).
+$script:watchdogPaused = $false
+& schtasks /query /tn $script:watchdogTask 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    & schtasks /end /tn $script:watchdogTask 2>&1 | Out-Null
+    $script:watchdogPaused = $true
+    Write-Host "[...] watchdog paused for deployment (re-armed at the end)" -ForegroundColor Yellow
+}
 
 # Stop only a stack previously deployed by this project before replacing files
 # or updating its managed runtime. This releases plugin/native-module locks and
@@ -397,4 +440,16 @@ Write-Host "===========================================" -ForegroundColor Green
 Write-Host ""
 if (-not $TestMode -and -not $SkipLaunch) {
     Start-Process "http://127.0.0.1:3080/"
+}
+
+# ---------- 7. deploy done: re-arm the paused watchdog ----------
+# The watchdog was paused before the old stack was stopped (install atomicity)
+# and must not stay paused now that the deployment succeeded. Re-run it only
+# when the task exists; a brand-new install registered it in section 3b above.
+& schtasks /query /tn $script:watchdogTask 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    & schtasks /run /tn $script:watchdogTask 2>&1 | Out-Null
+    Write-Host "[OK] watchdog re-armed after deployment" -ForegroundColor Green
+} elseif ($script:watchdogPaused) {
+    Write-Host "[!] watchdog task is gone after deployment - re-run install.ps1 to register it" -ForegroundColor Yellow
 }

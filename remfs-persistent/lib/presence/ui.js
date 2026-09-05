@@ -105,6 +105,10 @@ export const BOARD_GROUPS = Object.freeze([
   { key: 'notStarted', label: 'Not Started', states: [STATE.IDLE] },
   { key: 'done', label: 'Done', states: [STATE.DONE] },
   { key: 'failed', label: 'Failed', states: [STATE.FAILED] },
+  // DISCONNECTED used to fall through to "Not Started" because no group owned
+  // it. "Cannot confirm alive" is not "not started", so it gets its own last
+  // column (lowest Orb priority, matching STATE_PRIORITY).
+  { key: 'disconnected', label: 'Disconnected', states: [STATE.DISCONNECTED] },
 ])
 
 /** Group tasks for the board. STALE tasks carry a `stalled: true` flag. */

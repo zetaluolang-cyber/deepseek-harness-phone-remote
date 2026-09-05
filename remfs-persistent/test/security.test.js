@@ -77,6 +77,11 @@ test('protected credential access is denied', () => {
     'C:\\Windows\\System32',
     'C:\\Users\\zeta\\Documents\\xwechat_files\\data',
     'C:\\Users\\zeta\\Documents\\KingsoftData\\x',
+    // F8: the allowlist file itself (and writer tmp variants) is hard-denied
+    // so a paired device can never read/overwrite it through the generic RPC.
+    ROOT + '\\.remfs-roots.json',
+    ROOT + '\\sub\\.remfs-roots.json.tmp',
+    'C:\\Users\\zeta\\Documents\\.remfs-roots.json.old',
   ]) {
     assert.equal(deniedPath(p, wp), true, 'should be denied: ' + p)
   }
@@ -482,17 +487,20 @@ test('permission/read error on the store fails closed', async (t) => {
   } finally { await rm(path.dirname(f), { recursive: true, force: true }) }
 })
 
-// Devices carry capabilities; the obsolete `approval` grant migrates to the
-// explicit device-admin capability and missing lists receive safe defaults.
-test('device capability: newly paired device gets files+device-admin', async () => {
+// Devices carry capabilities. F9 (least-privilege defaults): a NEWLY paired
+// device gets files ONLY - device-admin is a PC-side grant (an owner edits
+// ~/.dsh/remfs-security.json to add it). The obsolete `approval` grant still
+// migrates to device-admin for EXISTING store entries.
+test('device capability: newly paired device gets files only (no device-admin)', async () => {
   const f = await tempFile()
   try {
     const code = await ensurePairingCode(f)
     const d = await pairDevice(code, 'phone', f)
     const v = await verifyDevice(d.deviceId, d.credential, f)
     assert.equal(v.ok, true)
-    assert.deepEqual(v.device.capabilities, ['files', 'device-admin'])
-    assert.equal(deviceHasCapability(v.device, 'device-admin'), true)
+    assert.deepEqual(v.device.capabilities, ['files'], 'a fresh pair must be files-only')
+    assert.equal(deviceHasCapability(v.device, 'device-admin'), false,
+      'device-admin must NOT be granted at pair time (F9)')
     assert.equal(deviceHasCapability(v.device, 'files'), true)
     // the removed cockpit capability is never granted
     assert.equal(deviceHasCapability(v.device, 'cockpit'), false)
@@ -508,7 +516,11 @@ test('device capability: newly paired device gets files+device-admin', async () 
   } finally { await rm(path.dirname(f), { recursive: true, force: true }) }
 })
 
-test('device capability: legacy device (no capabilities field) gets all defaults', async () => {
+// F9 (least-privilege defaults): a legacy store entry with NO capabilities
+// field receives the current minimal default on its next verify - files only.
+// device-admin is never inferred from an absent list; it must be explicit in
+// the store (an owner edit), which is exactly what this test simulates next.
+test('device capability: legacy device (no capabilities field) gets files only', async () => {
   const f = await tempFile()
   const fsp = await import('node:fs/promises')
   try {
@@ -520,8 +532,15 @@ test('device capability: legacy device (no capabilities field) gets all defaults
     await fsp.writeFile(f, JSON.stringify(raw), 'utf8')
     const v = await verifyDevice(d.deviceId, d.credential, f)
     assert.equal(v.ok, true)
-    assert.deepEqual(v.device.capabilities, ['files', 'device-admin'])
+    assert.deepEqual(v.device.capabilities, ['files'], 'absent list must not infer device-admin (F9)')
     assert.equal(deviceHasCapability(v.device, 'files'), true)
+    // An owner can still grant device-admin by editing the store: after the
+    // edit, verify/list surface the grant and the gate answers yes.
+    raw.devices[0].capabilities = ['files', 'device-admin']
+    await fsp.writeFile(f, JSON.stringify(raw), 'utf8')
+    const v2 = await verifyDevice(d.deviceId, d.credential, f)
+    assert.deepEqual(v2.device.capabilities, ['files', 'device-admin'])
+    assert.equal(deviceHasCapability(v2.device, 'device-admin'), true)
   } finally { await rm(path.dirname(f), { recursive: true, force: true }) }
 })
 
@@ -529,6 +548,32 @@ test('device capability: obsolete approval migrates to device-admin without wide
   assert.deepEqual(normalizeDeviceCapabilities(['files', 'approval']), ['files', 'device-admin'])
   assert.deepEqual(normalizeDeviceCapabilities(['files']), ['files'])
   assert.deepEqual(normalizeDeviceCapabilities([]), [])
+})
+
+// F1: the security store, the pairing .txt (plaintext code) and the companion
+// token must never be world-readable. Modes are only meaningful off Windows
+// (Windows secures files with ACLs inherited from the private user profile).
+test('secret files: store, pairing txt, corrupt backup and companion token are 0o600', {
+  skip: process.platform === 'win32' ? 'file modes are ACL-based on Windows' : false,
+}, async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'remfs-mode-'))
+  const f = path.join(dir, 'security.json')
+  try {
+    await ensurePairingCode(f) // mints code -> writes store + pairing txt
+    await ensureCompanionToken(path.join(dir, 'remfs-companion-token'))
+    const modeOf = async (p) => (await stat(p)).mode & 0o777
+    assert.equal(await modeOf(f), 0o600, 'security store must be 0o600')
+    assert.equal(await modeOf(path.join(dir, 'remfs-pairing.txt')), 0o600, 'pairing txt must be 0o600')
+    assert.equal(await modeOf(path.join(dir, 'remfs-companion-token')), 0o600, 'companion token must be 0o600')
+    // a corrupt store's backup is written with the same private mode
+    await writeFile(f, '{ not json', { encoding: 'utf8', mode: 0o600 })
+    const v = await verifyDevice('x', 'y', f)
+    assert.equal(v.error, 'store-corrupt')
+    const backups = (await (await import('node:fs/promises')).readdir(dir))
+      .filter((n) => n.startsWith('security.json.corrupt-'))
+    assert.ok(backups.length >= 1, 'corrupt store must be backed up')
+    assert.equal(await modeOf(path.join(dir, backups[0])), 0o600, 'corrupt backup must be 0o600')
+  } finally { await rm(dir, { recursive: true, force: true }) }
 })
 
 test('remfs options: pocketStrict defaults OFF, fails closed on missing/corrupt files', async () => {

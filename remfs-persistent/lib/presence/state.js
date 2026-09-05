@@ -10,6 +10,13 @@
 //   6. agent running                    → RUNNING
 //   7. otherwise                        → IDLE
 //
+// The `systemHeartbeatAt` fact this resolver consumes is ENGINE liveness (the
+// presence process answered the snapshot), fed by the service / dogfood via
+// heartbeat.effectiveSystemAliveAt(). It is NOT the session's last event time:
+// a quiet session (waiting, DONE, FAILED, IDLE, empty log) stays in its state
+// while the engine answers and only becomes DISCONNECTED when the engine
+// heartbeat is stale or the per-session loop is gone (orphaned open turn).
+//
 // STALE is NEVER asserted as "deadlock" — only "no meaningful progress
 // observed for >= threshold" (§4.3, §42). All reasons are observable facts.
 import { STATE } from './contract.js'

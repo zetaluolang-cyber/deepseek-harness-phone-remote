@@ -38,6 +38,22 @@ if (-not (Get-Command Get-OwnedHarnessPid -ErrorAction SilentlyContinue) -or
     exit 1
 }
 
+# Windows PowerShell 5.1 Start-Process quirk: an ArgumentList ARRAY is joined
+# into a raw command line with NO quoting of its elements, so a path that
+# contains spaces (e.g. C:\Users\My Name\.dsh\...) arrives as several argv
+# tokens. ConvertTo-ArgLine wraps EVERY token in exactly one pair of double
+# quotes and joins them into a single argument string, which 5.1 then hands to
+# the child unchanged. (Empirically verified on PS 5.1 with node, cmd and
+# powershell children: the doubled-quote '""x""' style is NOT preserved by
+# ArgumentList handling - exactly one quote pair per token survives and each
+# spaced path stays one argv token.)
+function ConvertTo-ArgLine {
+    param([object[]]$Tokens)
+    $out = @()
+    foreach ($t in $Tokens) { $out += ('"' + [string]$t + '"') }
+    return ($out -join " ")
+}
+
 function Test-HarnessRunning {
     return ($null -ne (Get-OwnedHarnessPid -Port 3080 -Marker $dshBin))
 }
@@ -118,8 +134,10 @@ if (-not (Test-HarnessRunning)) {
     $trusted = @("--port", "3080", "--trusted-host", "__TSIP__", "--trusted-host", "__TSNAME__")
     if ($lanIP) { $trusted += @("--trusted-host", $lanIP) }
     Write-Host "Launching DeepSeek Harness (dsh v$dshVersion)..."
+    # Single argument line: 5.1 never quotes ArgumentList ARRAY elements, so a
+    # spaced $dshBin would otherwise arrive split. ConvertTo-ArgLine quotes.
     $proc = Start-Process -FilePath $node `
-        -ArgumentList (@($dshBin, "web") + $trusted) `
+        -ArgumentList (ConvertTo-ArgLine (@($dshBin, "web") + $trusted)) `
         -WorkingDirectory $workspace `
         -WindowStyle Hidden `
         -RedirectStandardOutput $outLog `
@@ -141,7 +159,7 @@ if ((Test-HarnessRunning) -and (Test-Path $forwardBin) -and -not (Test-ForwardRu
     $fOut = Join-Path $logDir "forward_$stamp.out.log"
     $fErr = Join-Path $logDir "forward_$stamp.err.log"
     Start-Process -FilePath $node `
-        -ArgumentList @($forwardBin, $tailscaleIP, "3080", "3080") `
+        -ArgumentList (ConvertTo-ArgLine @($forwardBin, $tailscaleIP, "3080", "3080")) `
         -WorkingDirectory $workspace `
         -WindowStyle Hidden `
         -RedirectStandardOutput $fOut `
@@ -180,7 +198,7 @@ if ($lanIP -and (Test-HarnessRunning) -and (Test-Path $forwardBin)) {
             $fOut = Join-Path $logDir "forward_lan_$stamp.out.log"
             $fErr = Join-Path $logDir "forward_lan_$stamp.err.log"
             Start-Process -FilePath $node `
-                -ArgumentList @($forwardBin, $lanIP, "3080", "3080") `
+                -ArgumentList (ConvertTo-ArgLine @($forwardBin, $lanIP, "3080", "3080")) `
                 -WorkingDirectory $workspace `
                 -WindowStyle Hidden `
                 -RedirectStandardOutput $fOut `
@@ -209,7 +227,7 @@ if ($ready -and -not $keepAwakeAlive -and (Test-Path $keepAwakeBin)) {
     $kOut = Join-Path $logDir "keepawake_$stamp.out.log"
     $kErr = Join-Path $logDir "keepawake_$stamp.err.log"
     Start-Process -FilePath "powershell.exe" `
-        -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $keepAwakeBin) `
+        -ArgumentList (ConvertTo-ArgLine @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $keepAwakeBin)) `
         -WindowStyle Hidden `
         -RedirectStandardOutput $kOut `
         -RedirectStandardError $kErr | Out-Null

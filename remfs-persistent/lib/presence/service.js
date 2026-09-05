@@ -10,7 +10,13 @@
 //   - ctx.workspaceRegistry.list()             (workspace mapping)
 //
 // Per session it derives:
-//   - system heartbeat   = last event time (log liveness)
+//   - system heartbeat   = ENGINE liveness: this process answered the presence
+//                          query (lastSystemAliveAt), NOT the last event time.
+//                          A quiet session (agent waiting, DONE, FAILED, IDLE,
+//                          empty log) stays alive while the engine answers;
+//                          effectiveSystemAliveAt() also keeps DISCONNECTED for
+//                          an orphaned per-session loop (open turn, not live,
+//                          log silent past the TTL)
 //   - progress heartbeat = last MEANINGFUL progress event (heartbeat.js)
 //   - pending approval   = approval/asked without matching approval/decided
 //   - terminal failure   = last turn ended 'error' OR tool failure in last turn
@@ -19,7 +25,7 @@
 //
 // State resolution + STALE heuristic + explainable reasons are pure modules
 // (state.js / heartbeat.js / summary.js). The service only wires real data in.
-import { foldHeartbeats, isSystemAlive, isProgressStale } from './heartbeat.js'
+import { foldHeartbeats, effectiveSystemAliveAt } from './heartbeat.js'
 import { resolveState, transition } from './state.js'
 import { summarize, staleReasonLines } from './summary.js'
 import {
@@ -164,6 +170,14 @@ export function createPresenceService(ctx, opts = {}) {
   // second session's identical call and misjudged it STALE).
   const seenBySession = new Map()
 
+  // Engine aliveness: "the harness process is alive and answering". Updated on
+  // every successful presence call (tasks() after a successful session list,
+  // status() whenever it answers). This timestamp - NOT per-session event
+  // recency - is the system heartbeat (see effectiveSystemAliveAt). The
+  // heartbeat module stays pure; only the service knows when it answered.
+  let lastSystemAliveAt = 0
+  function markSystemAlive() { lastSystemAliveAt = Date.now() }
+
   /** Lightweight event records for one session (fail-closed). */
   async function sessionEvents(sessionId) {
     const sq = ctx.get && ctx.get('sessionQuery')
@@ -224,14 +238,28 @@ export function createPresenceService(ctx, opts = {}) {
     let seen = seenBySession.get(id)
     if (!seen) { seen = new Map(); seenBySession.set(id, seen) }
     const hb = foldHeartbeats(events, { now, seen })
+    const loopLive = live.has(id)
+    // System heartbeat = engine liveness (see effectiveSystemAliveAt). The
+    // only per-session input left is the orphaned-loop check: an open turn on
+    // a session that is NOT live and has been log-silent beyond the TTL means
+    // the per-session loop is gone -> DISCONNECTED even while the engine
+    // answers. Quiet-but-alive sessions stay in their own state; they never
+    // decay to DISCONNECTED because their log is silent.
+    const sysHeartbeatAt = effectiveSystemAliveAt({
+      sessionHeartbeatAt: hb.systemHeartbeatAt,
+      openTurn: hasOpenTurn(events),
+      loopLive,
+      systemAliveAt: lastSystemAliveAt,
+      now,
+    })
     const pending = hasPendingApproval(events)
     const failed = terminalFailure(events)
     const done = completed(events)
-    const running = agentRunning(events, live.has(id))
+    const running = agentRunning(events, loopLive)
 
     const staleReasons = []
     const state = resolveState({
-      systemHeartbeatAt: hb.systemHeartbeatAt,
+      systemHeartbeatAt: sysHeartbeatAt,
       progressHeartbeatAt: hb.progressHeartbeatAt,
       pendingApproval: pending,
       terminalFailure: failed,
@@ -272,7 +300,7 @@ export function createPresenceService(ctx, opts = {}) {
       state: finalState,
       summary,
       sizeBytes,
-      systemHeartbeatAt: hb.systemHeartbeatAt ? new Date(hb.systemHeartbeatAt).toISOString() : null,
+      systemHeartbeatAt: sysHeartbeatAt ? new Date(sysHeartbeatAt).toISOString() : null,
       progressHeartbeatAt: hb.progressHeartbeatAt ? new Date(hb.progressHeartbeatAt).toISOString() : null,
       startedAt,
       updatedAt,
@@ -295,6 +323,8 @@ export function createPresenceService(ctx, opts = {}) {
      * @param {Object} device - verified device.
      */
     async status(device) {
+      // answering a status probe proves the harness process is alive
+      markSystemAlive()
       return {
         ok: true,
         value: {
@@ -323,7 +353,14 @@ export function createPresenceService(ctx, opts = {}) {
         return err('sessions-unavailable', String((e && e.message) || e))
       }
       const list = Array.isArray(records) ? records : []
-      const now = Date.now()
+      // This snapshot IS an answered presence query, which proves the harness
+      // process is alive: mark the system heartbeat. It is shared by every
+      // session in the snapshot, so quiet sessions (waiting / DONE / FAILED /
+      // IDLE / empty) no longer decay to DISCONNECTED because their log is
+      // silent. Only an orphaned per-session loop (see aggregateSession) or a
+      // genuinely stale engine can still produce DISCONNECTED.
+      lastSystemAliveAt = Date.now()
+      const now = lastSystemAliveAt
       const wsMap = workspaceIndex()
       const live = liveSessionIds()
       const prevStates = new Map(this._lastStates || [])

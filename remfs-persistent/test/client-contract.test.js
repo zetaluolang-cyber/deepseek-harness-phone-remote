@@ -189,14 +189,24 @@ async function setup() {
     const res = await pairDevice(code, name, secFile)
     return { deviceId: res.deviceId, credential: res.credential }
   }
-  return { dir, secFile, handler, pair }
+  // revoke is a device-admin op; fresh pairs are files-only (F9), so grant the
+  // capability through the store exactly like a PC owner editing the store.
+  const grantAdmin = async (deviceId) => {
+    const store = JSON.parse(await fsp.readFile(secFile, 'utf8'))
+    const dev = store.devices.find((d) => d.id === deviceId)
+    if (!dev) throw new Error('grantAdmin: device not paired')
+    dev.capabilities = ['files', 'device-admin']
+    await fsp.writeFile(secFile, JSON.stringify(store, null, 2), 'utf8')
+  }
+  return { dir, secFile, handler, pair, grantAdmin }
 }
 
 test('dispatcher: the client-shaped revoke payload revokes the TARGET, not the caller', async (t) => {
-  const { dir, handler, pair } = await setup()
+  const { dir, handler, pair, grantAdmin } = await setup()
   try {
     const A = await pair('device-a')
     const B = await pair('device-b')
+    await grantAdmin(A.deviceId)
     // Exactly what client.js produces after rpc() attaches auth:
     const revokePayload = { targetDeviceId: B.deviceId, deviceId: A.deviceId, credential: A.credential }
     const rev = await handler('revoke', revokePayload)
@@ -210,10 +220,11 @@ test('dispatcher: the client-shaped revoke payload revokes the TARGET, not the c
 })
 
 test('dispatcher: the OLD broken payload ({ id }) is rejected and revokes nothing', async (t) => {
-  const { dir, handler, pair } = await setup()
+  const { dir, handler, pair, grantAdmin } = await setup()
   try {
     const A = await pair('device-a')
     const B = await pair('device-b')
+    await grantAdmin(A.deviceId)
     const bad = await handler('revoke', { id: B.deviceId, deviceId: A.deviceId, credential: A.credential })
     assert.equal(bad.ok, false)
     assert.equal(bad.error.code, 'bad-request')

@@ -336,9 +336,10 @@ export default {
 
     // Generate/refresh the pairing code and surface it PC-side. The code
     // regenerates at every startup when the previous one was used or expired,
-    // so there is always a clear path to a fresh code.
+    // so there is always a clear path to a fresh code. F1: never log the
+    // plaintext code - it is written to a 0o600 file the PC user opens.
     ensurePairingCode().then((plain) => {
-      if (plain) console.log('[remfs-persistent] pairing code: ' + plain + ' (see ~/.dsh/remfs-pairing.txt)')
+      if (plain) console.log('[remfs-persistent] pairing code written to ~/.dsh/remfs-pairing.txt (valid 10 minutes)')
       else console.log('[remfs-persistent] pairing code unchanged (see ~/.dsh/remfs-pairing.txt)')
     }).catch((e) => {
       console.log('[remfs-persistent] pairing code unavailable: ' + String(e))
@@ -358,8 +359,9 @@ export default {
         } catch { return }
         try { await unlink(flag) } catch { /* ignore */ }
         try {
-          const plain = await rotatePairingCode()
-          console.log('[remfs-persistent] pairing code rotated: ' + plain + ' (see ~/.dsh/remfs-pairing.txt)')
+          await rotatePairingCode()
+          // F1: log the file, never the plaintext code.
+          console.log('[remfs-persistent] pairing code rotated; written to ~/.dsh/remfs-pairing.txt (valid 10 minutes)')
         } catch (e) {
           console.log('[remfs-persistent] pairing rotation failed: ' + String((e && e.message) || e))
         }

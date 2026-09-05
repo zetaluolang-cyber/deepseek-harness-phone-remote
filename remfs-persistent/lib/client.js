@@ -214,7 +214,7 @@ window.__ModuleLoader__.load({
         headSession: '新建会话', headFiles: '文件浏览',
         close: '✕ 关闭', loading: '加载中…',
         boardButton: '任务', orbLockedTitle: '配对后可查看任务详情',
-        boardTitle: 'Agent 任务', boardNeedsYou: '需要你', boardRunning: '运行中', boardNotStarted: '未开始', boardDone: '已完成', boardFailed: '失败',
+        boardTitle: 'Agent 任务', boardNeedsYou: '需要你', boardRunning: '运行中', boardNotStarted: '未开始', boardDone: '已完成', boardFailed: '失败', boardDisconnected: '已断开',
         boardStalled: '可能停滞', boardOpen: '打开', boardEmpty: '暂无任务', boardLoadFail: '任务加载失败',
         sessSizeWarn: '建议归档', wsSessions: '{n} 个会话 · {size}',
         notifNeedsYou: 'DeepSeek Harness 需要你', notifFailed: 'Agent 执行失败', notifDone: '任务完成',
@@ -257,7 +257,7 @@ window.__ModuleLoader__.load({
         headSession: 'New Session', headFiles: 'Files',
         close: '✕ Close', loading: 'Loading…',
         boardButton: 'Tasks', orbLockedTitle: 'Pair to view task details',
-        boardTitle: 'Agent tasks', boardNeedsYou: 'Needs You', boardRunning: 'Running', boardNotStarted: 'Not Started', boardDone: 'Done', boardFailed: 'Failed',
+        boardTitle: 'Agent tasks', boardNeedsYou: 'Needs You', boardRunning: 'Running', boardNotStarted: 'Not Started', boardDone: 'Done', boardFailed: 'Failed', boardDisconnected: 'Disconnected',
         boardStalled: 'Possibly stalled', boardOpen: 'Open', boardEmpty: 'No tasks', boardLoadFail: 'Failed to load tasks',
         sessSizeWarn: 'suggest archiving', wsSessions: '{n} sessions · {size}',
         notifNeedsYou: 'DeepSeek Harness needs you', notifFailed: 'Agent failed', notifDone: 'Task completed',
@@ -480,7 +480,7 @@ window.__ModuleLoader__.load({
     // ── Presence UI local helpers (mirror lib/presence/ui.js; the browser
     // bundle cannot import the lib module). The pure logic is unit-tested in
     // test/presence-ui.test.js against these EXACT rules.
-    const P_NEEDS = 'NEEDS_USER', P_FAILED = 'FAILED', P_STALE = 'STALE', P_RUNNING = 'RUNNING', P_DONE = 'DONE'
+    const P_NEEDS = 'NEEDS_USER', P_FAILED = 'FAILED', P_STALE = 'STALE', P_RUNNING = 'RUNNING', P_DONE = 'DONE', P_DISCONNECTED = 'DISCONNECTED'
 
     // ── Browser notifications (design §14) ────────────────────────────────
     // NEEDS_USER/FAILED always notify; never RUNNING/STALE/DONE/IDLE. This
@@ -522,13 +522,14 @@ window.__ModuleLoader__.load({
     }
 
     function groupTasksLocal(tasks) {
-      const groups = { needsUser: [], running: [], notStarted: [], done: [], failed: [] }
+      const groups = { needsUser: [], running: [], notStarted: [], done: [], failed: [], disconnected: [] }
       for (const t of Array.isArray(tasks) ? tasks : []) {
         let key = 'notStarted'
         if (t.state === P_NEEDS) key = 'needsUser'
         else if (t.state === P_RUNNING || t.state === P_STALE) key = 'running'
         else if (t.state === P_DONE) key = 'done'
         else if (t.state === P_FAILED) key = 'failed'
+        else if (t.state === P_DISCONNECTED) key = 'disconnected'
         groups[key].push(t.state === P_STALE ? Object.assign({}, t, { stalled: true }) : t)
       }
       for (const k of Object.keys(groups)) {
@@ -600,6 +601,7 @@ window.__ModuleLoader__.load({
             groupRow('notStarted', 'boardNotStarted'),
             groupRow('done', 'boardDone'),
             groupRow('failed', 'boardFailed'),
+            groupRow('disconnected', 'boardDisconnected'),
             tasks.length === 0 ? React.createElement('div', { className: 'remfs-sec' }, t('boardEmpty')) : null
           )
 

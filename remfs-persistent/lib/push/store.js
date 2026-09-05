@@ -89,7 +89,9 @@ export function createPushStore(opts = {}) {
     const dir = path.dirname(file)
     await mkdir(dir, { recursive: true })
     const tmp = file + '.tmp-' + process.pid + '-' + Date.now()
-    await writeFile(tmp, JSON.stringify(d, null, 2), 'utf8')
+    // F1: the store persists the VAPID PRIVATE KEY PEM - the tmp file must be
+    // 0o600 so the rename never leaves a world-readable secret behind.
+    await writeFile(tmp, JSON.stringify(d, null, 2), { encoding: 'utf8', mode: 0o600 })
     await rename(tmp, file)
   }
 

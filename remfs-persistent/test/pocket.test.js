@@ -5,7 +5,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createPocketHandler } from '../lib/presence/pocket.js'
-import { ERROR_CODES } from '../lib/presence/api.js'
+import { ERROR_CODES, validateTaskDTO } from '../lib/presence/api.js'
+import { UNAUTH_TITLE, redactTaskDTO, redactTasksValue, redactTasksEnvelope } from '../lib/presence/redact.js'
 
 const okEnv = (value) => ({ ok: true, value })
 
@@ -97,4 +98,92 @@ test('pocket: store corruption fails closed before everything else', async () =>
 test('pocket: unknown endpoint for a verified device is bad-request', async () => {
   const { handler } = makeHandler()
   assert.equal((await handler('nope', { deviceId: 'd1', credential: 'c' })).error.code, 'bad-request')
+})
+
+// ---------------------------------------------------------------- F5 redaction
+// Unauthenticated TASKS inside the default (non-strict) fence must redact user
+// content (title/summary) AT THE BOUNDARY while keeping every structural field
+// a v1 consumer needs; authenticated callers keep full content.
+
+function fullTask(over = {}) {
+  return {
+    taskId: 't1', sessionId: 's1', title: 'SECRET TITLE', state: 'RUNNING',
+    summary: 'secret progress', systemHeartbeatAt: '2026-01-01T00:00:00.000Z',
+    progressHeartbeatAt: '2026-01-01T00:01:00.000Z', startedAt: 1, updatedAt: 2,
+    attention: null, staleReason: ['no meaningful progress for 21m'], sizeBytes: 4242,
+    ...over,
+  }
+}
+
+test('pocket: unauthenticated TASKS redact title/summary, structure intact', async () => {
+  const real = fullTask()
+  const { handler } = makeHandler({
+    verifyDevice: async () => ({ error: 'auth-invalid' }),
+    deps: { presence: { tasks: () => okEnv({ tasks: [real], orb: real }) } },
+  })
+  const r = await handler('presence.tasks', {})
+  assert.equal(r.ok, true)
+  assert.equal(r.value.tasks.length, 1)
+  const t = r.value.tasks[0]
+  assert.equal(t.title, UNAUTH_TITLE, 'title must become the placeholder')
+  assert.equal(t.summary, '', 'summary must be emptied')
+  // structural/user-content-free fields stay intact
+  assert.equal(t.taskId, 't1')
+  assert.equal(t.sessionId, 's1')
+  assert.equal(t.state, 'RUNNING')
+  assert.equal(t.systemHeartbeatAt, real.systemHeartbeatAt)
+  assert.equal(t.progressHeartbeatAt, real.progressHeartbeatAt)
+  assert.deepEqual(t.staleReason, real.staleReason)
+  assert.equal(t.sizeBytes, 4242)
+  assert.equal(r.value.orb.title, UNAUTH_TITLE, 'the orb DTO must be redacted too')
+  // the response stays a valid v1 DTO and leaks no user content
+  assert.deepEqual(validateTaskDTO(t), [], 'redacted DTO must satisfy the frozen schema')
+  assert.ok(!JSON.stringify(r).includes('SECRET'), 'no user content may reach an unauthenticated caller')
+})
+
+test('pocket: authenticated TASKS keep full titles for every device', async () => {
+  const real = fullTask()
+  const { handler } = makeHandler({
+    deps: { presence: { tasks: () => okEnv({ tasks: [real], orb: real }) } },
+  })
+  // capability-less device too: STATUS/TASKS are never capability-gated
+  const strict = makeHandler({
+    verifyDevice: async () => ({ ok: true, device: { id: 'd4', capabilities: [] } }),
+    deps: { presence: { tasks: () => okEnv({ tasks: [real], orb: real }) } },
+  })
+  const r = await handler('presence.tasks', { deviceId: 'd1', credential: 'c' })
+  assert.equal(r.value.tasks[0].title, 'SECRET TITLE')
+  assert.equal(r.value.tasks[0].summary, 'secret progress')
+  const r2 = await strict.handler('presence.tasks', { deviceId: 'd4', credential: 'c' })
+  assert.equal(r2.value.tasks[0].title, 'SECRET TITLE', 'verified devices never see redacted content')
+})
+
+test('pocket: unauthenticated tasks ERROR envelopes pass through untouched', async () => {
+  const { handler } = makeHandler({
+    verifyDevice: async () => ({ error: 'auth-invalid' }),
+    deps: { presence: { tasks: () => ({ ok: false, error: { code: 'sessions-unavailable', message: 'x', details: {} } }) } },
+  })
+  const r = await handler('presence.tasks', {})
+  assert.equal(r.ok, false)
+  assert.equal(r.error.code, 'sessions-unavailable')
+})
+
+test('redact helpers: pure functions keep shape, pass v1 validation, leave ok=false alone', () => {
+  const real = fullTask()
+  const dto = redactTaskDTO(real)
+  assert.equal(dto.title, UNAUTH_TITLE)
+  assert.equal(dto.summary, '')
+  assert.equal(dto.taskId, 't1')
+  assert.deepEqual(validateTaskDTO(dto), [])
+  const value = redactTasksValue({ tasks: [real], orb: real, extra: 1 })
+  assert.equal(value.tasks[0].title, UNAUTH_TITLE)
+  assert.equal(value.orb.title, UNAUTH_TITLE)
+  assert.equal(value.extra, 1, 'redaction must not drop sibling fields')
+  const env = redactTasksEnvelope({ ok: true, value: { tasks: [real], orb: null } })
+  assert.equal(env.value.tasks[0].summary, '')
+  assert.equal(env.value.orb, null)
+  const errEnv = redactTasksEnvelope({ ok: false, error: { code: 'x', message: 'm', details: {} } })
+  assert.deepEqual(errEnv, { ok: false, error: { code: 'x', message: 'm', details: {} } })
+  assert.equal(redactTasksEnvelope(null), null)
+  assert.equal(redactTasksEnvelope(undefined), undefined)
 })

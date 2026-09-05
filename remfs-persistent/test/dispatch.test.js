@@ -55,7 +55,17 @@ async function setup() {
     assert.ok(res.deviceId && res.credential, 'pair should succeed')
     return { deviceId: res.deviceId, credential: res.credential }
   }
-  return { dir, root, secFile, handler, pair, workspaces }
+  // F9: a fresh pair is files-only, so tests that exercise device-admin ops
+  // grant the capability through the store file - exactly how a PC owner
+  // grants device-admin by editing ~/.dsh/remfs-security.json.
+  const grantAdmin = async (deviceId) => {
+    const store = JSON.parse(await fsp.readFile(secFile, 'utf8'))
+    const dev = store.devices.find((d) => d.id === deviceId)
+    if (!dev) throw new Error('grantAdmin: device not paired')
+    dev.capabilities = ['files', 'device-admin']
+    await fsp.writeFile(secFile, JSON.stringify(store, null, 2), 'utf8')
+  }
+  return { dir, root, secFile, handler, pair, grantAdmin, workspaces }
 }
 
 async function teardown(t, dir) {
@@ -67,12 +77,20 @@ const listCall = (h, p) => h('list', p)
 // ------------------------------------------------------------- bug 2: revoke
 
 test('revoke protocol: A revokes B; A stays authorized, B is invalidated', async (t) => {
-  const { dir, root, handler, pair } = await setup()
+  const { dir, root, handler, pair, grantAdmin } = await setup()
   try {
     const A = await pair('device-a')
     const B = await pair('device-b')
     assert.equal((await listCall(handler, { deviceId: A.deviceId, credential: A.credential, path: root })).ok, true)
     assert.equal((await listCall(handler, { deviceId: B.deviceId, credential: B.credential, path: root })).ok, true)
+
+    // revoke is a device-admin op and a FRESH pair is files-only (F9), so the
+    // caller must hold the PC-side device-admin grant to use it.
+    const denied = await handler('revoke', { deviceId: A.deviceId, credential: A.credential, targetDeviceId: B.deviceId })
+    assert.equal(denied.ok, false)
+    assert.equal(denied.error.code, 'capability-required')
+    assert.equal(denied.error.details.capability, 'device-admin')
+    await grantAdmin(A.deviceId)
 
     // A revokes B via targetDeviceId (not the caller's deviceId).
     const rev = await handler('revoke', { deviceId: A.deviceId, credential: A.credential, targetDeviceId: B.deviceId })
@@ -126,7 +144,7 @@ test('capability gate: files and device-admin are enforced independently', async
 test('capability gate: unregistered endpoints are rejected, never capability-exempt', async (t) => {
   const { dir, handler, pair } = await setup()
   try {
-    const dev = await pair('phone') // full default capabilities
+    const dev = await pair('phone') // fresh pairs are files-only (F9); any valid pair works here
     const res = await handler('someFutureEndpoint', dev)
     assert.equal(res.ok, false)
     assert.equal(res.error.code, 'bad-request')
@@ -237,6 +255,51 @@ test('allowlist: corrupt file fails closed (never expands to workspace root)', a
     await rm(path.join(root, '.remfs-roots.json'), { force: true })
     const r4 = await listCall(handler, { ...base, path: root })
     assert.equal(r4.ok, true)
+  } finally { await teardown(t, dir) }
+})
+
+// F8 (allowlist self-widening): .remfs-roots.json sits inside the default
+// allowed root, so WITHOUT a hard deny a paired device could overwrite it via
+// the generic `write` RPC and grant itself any location. Every generic path
+// (read/write/list) must refuse the allowlist file and its tmp variants; only
+// the sanctioned setAllowed -> adapter.writeAllowedFile path may touch it.
+test('allowlist file: generic read/write/list can never touch .remfs-roots.json', async (t) => {
+  const { dir, root, handler, pair } = await setup()
+  try {
+    const A = await pair('device-a')
+    const base = { deviceId: A.deviceId, credential: A.credential }
+    const allowFile = path.join(root, '.remfs-roots.json')
+    const tmpFile = path.join(root, '.remfs-roots.json.tmp')
+    await fsp.writeFile(allowFile, JSON.stringify([root]), 'utf8')
+    await fsp.writeFile(tmpFile, '{}', 'utf8')
+    const original = await fsp.readFile(allowFile, 'utf8')
+
+    // generic read is refused
+    const rd = await handler('read', { ...base, path: allowFile })
+    assert.equal(rd.ok, false)
+    assert.equal(rd.error.code, 'path-protected')
+
+    // generic write is refused (the widening attempt), file untouched
+    const w = await handler('write', { ...base, path: allowFile, content: '["C:\\"]' })
+    assert.equal(w.ok, false)
+    assert.equal(w.error.code, 'path-protected')
+    const w2 = await handler('write', { ...base, path: tmpFile, content: '["C:\\"]' })
+    assert.equal(w2.ok, false)
+    assert.equal(w2.error.code, 'path-protected')
+    assert.equal(await fsp.readFile(allowFile, 'utf8'), original, 'allowlist must be byte-identical')
+
+    // the allowlist file never even appears in listings (metadata filtered)
+    const lst = await listCall(handler, { ...base, path: root })
+    assert.equal(lst.ok, true)
+    const names = lst.value.entries.map((e) => e.name)
+    assert.ok(!names.includes('.remfs-roots.json'), 'allowlist file must be filtered from listings')
+    assert.ok(!names.includes('.remfs-roots.json.tmp'), 'allowlist tmp must be filtered from listings')
+
+    // the sanctioned path still works: setAllowed narrows to a sub-path
+    const narrow = await handler('setAllowed', { ...base, roots: [path.join(root, 'sub')] })
+    assert.equal(narrow.ok, true, 'PC-owner narrowing via setAllowed must keep working')
+    const after = JSON.parse(await fsp.readFile(allowFile, 'utf8'))
+    assert.deepEqual(after, [path.join(root, 'sub')])
   } finally { await teardown(t, dir) }
 })
 

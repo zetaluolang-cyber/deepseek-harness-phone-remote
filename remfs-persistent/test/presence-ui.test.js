@@ -68,7 +68,7 @@ test('quick peek: shows state, title, summary, stale reasons, last progress, act
 
 // ------------------------------------------------------------ task board
 
-test('task board: groups by state; STALE nests under Running', () => {
+test('task board: groups by state; STALE nests under Running, DISCONNECTED has its own column', () => {
   const tasks = [
     task('a', STATE.NEEDS_USER),
     task('b', STATE.RUNNING),
@@ -76,21 +76,33 @@ test('task board: groups by state; STALE nests under Running', () => {
     task('d', STATE.IDLE),
     task('e', STATE.DONE),
     task('f', STATE.FAILED),
+    task('g', STATE.DISCONNECTED),
   ]
   const g = groupTasks(tasks)
   assert.equal(g.needsUser.length, 1)
   assert.equal(g.running.length, 2, 'RUNNING + STALE both under Running')
   assert.equal(g.running[0].stalled, true, 'stalled task first in Running group')
-  assert.equal(g.notStarted.length, 1)
+  assert.equal(g.notStarted.length, 1, 'only IDLE belongs to Not Started')
   assert.equal(g.done.length, 1)
   assert.equal(g.failed.length, 1)
+  assert.equal(g.disconnected.length, 1, 'DISCONNECTED must never land under Not Started')
   const counts = boardCounts(g)
   assert.equal(counts.running, 2)
+  assert.equal(counts.disconnected, 1)
 })
 
-test('task board: groups are the design §18 set (no Jira columns)', () => {
+test('task board: groups are the design §18 set + a Disconnected home (no Jira columns)', () => {
   const keys = BOARD_GROUPS.map((g) => g.key)
-  assert.deepEqual(keys, ['needsUser', 'running', 'notStarted', 'done', 'failed'])
+  assert.deepEqual(keys, ['needsUser', 'running', 'notStarted', 'done', 'failed', 'disconnected'])
+})
+
+test('task board: DISCONNECTED alone goes to its group, never the Not Started fallback', () => {
+  const g = groupTasks([task('x', STATE.DISCONNECTED)])
+  assert.equal(g.disconnected.length, 1)
+  assert.equal(g.disconnected[0].sessionId, 'x')
+  assert.equal(g.notStarted.length, 0, 'DISCONNECTED is not an IDLE fallback')
+  assert.equal(g.disconnected[0].stalled, undefined, 'stalled flag is STALE-only')
+  assert.equal(boardCounts(g).disconnected, 1)
 })
 
 // ------------------------------------------------------------ notification

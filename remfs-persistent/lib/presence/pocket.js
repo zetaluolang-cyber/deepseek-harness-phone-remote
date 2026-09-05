@@ -4,7 +4,9 @@
 // Authorization layers, in order:
 //   1. store-corrupt          -> always an error (fail closed)
 //   2. no/invalid credential  -> read-only STATUS/TASKS allowed inside the
-//      browser-trust fence UNLESS pocketStrict; everything else auth-invalid
+//      browser-trust fence UNLESS pocketStrict; everything else auth-invalid.
+//      Unauthenticated TASKS are REDACTED at the boundary (F5): the DTO
+//      structure stays, user content (title/summary) does not.
 //   3. capability             -> push.subscribe/unsubscribe require `files`
 //
 // Why `files` gates push: a push payload carries the task title and summary —
@@ -19,6 +21,7 @@
 // The error code is `capability-denied` — already in the FROZEN v1 vocabulary
 // (it was reserved when the cockpit gate was removed), so no contract change.
 import { PRESENCE_OPS } from './contract.js'
+import { redactTasksEnvelope } from './redact.js'
 import { deviceHasCapability } from '../security.js'
 
 const pocketErr = (code, message) => ({ ok: false, error: { code, message, details: {} } })
@@ -47,10 +50,17 @@ export function createPocketHandler(deps) {
     // Board render inside the same browser-trust fence as the GUI itself,
     // and the DTOs expose only what the GUI already shows. pocketStrict=true
     // disables this fence and every call requires a valid credential.
+    // F5: an unauthenticated TASKS caller still receives the full DTO
+    // structure (taskId/sessionId/state/heartbeats/sizeBytes/staleReason) but
+    // user content is REDACTED at this boundary - title becomes a placeholder
+    // and summary is emptied. STATUS carries no user content.
     if (authRes.error) {
       if (!pocketStrict) {
         if (endpoint === PRESENCE_OPS.STATUS) return presence.status(null)
-        if (endpoint === PRESENCE_OPS.TASKS) return presence.tasks()
+        if (endpoint === PRESENCE_OPS.TASKS) {
+          const r = await presence.tasks()
+          return redactTasksEnvelope(r)
+        }
       }
       return pocketErr('auth-invalid', 'device authentication failed — re-pair the device')
     }
