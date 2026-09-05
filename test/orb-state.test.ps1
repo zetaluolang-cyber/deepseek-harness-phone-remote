@@ -191,5 +191,58 @@ if ($unk.state -ne 'DISCONNECTED' -or $unk.detail -notmatch 'BOGUS') {
 }
 Write-Host "orb-state: OK (priority selection, empty -> IDLE, error/unknown envelopes)"
 
+
+# --- fleet view -------------------------------------------------------------
+# The single-orb sample answers "one of N is in state X". A person supervising
+# long agent runs needs the SHAPE of the fleet: how many need me, which ones,
+# and in what triage order. These pin that aggregation.
+function New-Task([string]$State, [string]$Title, [string]$SessionId, [long]$Updated) {
+    return [pscustomobject]@{ state = $State; title = $Title; sessionId = $SessionId; updatedAt = $Updated }
+}
+$fleetTasks = @(
+    (New-Task 'RUNNING'      'build'      's1' 100),
+    (New-Task 'NEEDS_USER'   'approve rm' 's2' 200),
+    (New-Task 'DONE'         'done job'   's3' 300),
+    (New-Task 'FAILED'       'broke'      's4' 400),
+    (New-Task 'NEEDS_USER'   'pick name'  's5' 500),
+    (New-Task 'RUNNING'      'test'       's6' 600),
+    (New-Task 'IDLE'         'idle one'   's7' 700),
+    (New-Task 'STALE'        'stuck'      's8' 800)
+)
+$fleet = Get-OrbFleet -Tasks $fleetTasks
+if ($fleet.total -ne 8) { Fail "fleet total must count every task, got $($fleet.total)" }
+if ($fleet.counts['NEEDS_USER'] -ne 2) { Fail "NEEDS_USER count wrong: $($fleet.counts['NEEDS_USER'])" }
+if ($fleet.counts['RUNNING'] -ne 2) { Fail "RUNNING count wrong: $($fleet.counts['RUNNING'])" }
+if ($fleet.working -ne 3) { Fail "working must be RUNNING+STALE = 3, got $($fleet.working)" }
+if ($fleet.settled -ne 2) { Fail "settled must be DONE+IDLE = 2, got $($fleet.settled)" }
+# triage: NEEDS_USER before FAILED, newest first inside a state
+$need = @($fleet.needing)
+if ($need.Count -ne 3) { Fail "needing must list every alert task, got $($need.Count)" }
+if ($need[0].state -ne 'NEEDS_USER' -or $need[0].sessionId -ne 's5') {
+    Fail "triage order wrong: first should be the NEWEST NEEDS_USER (s5), got $($need[0].sessionId)/$($need[0].state)"
+}
+if ($need[1].sessionId -ne 's2') { Fail "second should be the older NEEDS_USER (s2), got $($need[1].sessionId)" }
+if ($need[2].state -ne 'FAILED') { Fail "FAILED must sort after NEEDS_USER, got $($need[2].state)" }
+if ($fleet.summary -notmatch '3 need you' -or $fleet.summary -notmatch '3 running') {
+    Fail "summary must state the distribution, got '$($fleet.summary)'"
+}
+# a fleet with nothing to act on must say so with an EMPTY needing list
+$calm = Get-OrbFleet -Tasks @((New-Task 'RUNNING' 'a' 's1' 10), (New-Task 'DONE' 'b' 's2' 20))
+if (@($calm.needing).Count -ne 0) { Fail "no alert states must yield an empty needing list" }
+if ($calm.summary -match 'need you') { Fail "summary must not claim attention is needed: '$($calm.summary)'" }
+# empty / null input must never throw
+$empty = Get-OrbFleet -Tasks @()
+if ($empty.total -ne 0 -or @($empty.needing).Count -ne 0) { Fail "empty fleet must be empty, not null" }
+$nul = Get-OrbFleet -Tasks $null
+if ($nul.total -ne 0) { Fail "null task list must degrade to an empty fleet" }
+# Resolve-OrbPoll must carry the fleet through, not just the sampled task
+$multiBody = [pscustomobject]@{ ok = $true; value = [pscustomobject]@{ tasks = $fleetTasks } }
+$decision = Resolve-OrbPoll -Poll @{ kind = 'ok'; body = $multiBody; authenticated = $true } `
+    -Previous @{ state = 'IDLE' } -Config $cfg -NowMs 5000000
+if ($decision.state -ne 'NEEDS_USER') { Fail "orb must still sample the most urgent state, got $($decision.state)" }
+if ($decision.taskCount -ne 8) { Fail "taskCount must stay the full count, got $($decision.taskCount)" }
+if (@($decision.fleet.needing).Count -ne 3) { Fail "the decision must carry the whole actionable list, not one sample" }
+if ($decision.fleet.total -ne 8) { Fail "the decision must carry the whole fleet" }
+Write-Host "orb-state: OK (fleet distribution, triage order, calm fleet, degradation)"
 Write-Host "orb-state: ALL PASS"
 exit 0

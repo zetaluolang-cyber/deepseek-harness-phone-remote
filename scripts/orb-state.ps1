@@ -167,6 +167,79 @@ function Select-OrbTask {
   return $best
 }
 
+function Get-OrbFleet {
+  # Fleet view: the SHAPE of the whole task set, not one sampled task.
+  #
+  # The single-orb display answers "one of your N tasks is in state X", which
+  # collapses a 27-task snapshot into one glyph. A person running long agent
+  # sessions is not supervising an agent, they are supervising a fleet: what
+  # they need at a glance is the distribution (how many need me, how many are
+  # working, how many finished) and, for triage, WHICH ones need them.
+  #
+  # Returns:
+  #   counts     ordered hashtable state -> count (only non-zero states)
+  #   total      total task count
+  #   needing    tasks in an ALERT state (NEEDS_USER/FAILED), priority-ordered
+  #              then newest-first; each @{ state; title; sessionId }
+  #   working    count of RUNNING + STALE
+  #   settled    count of DONE + IDLE
+  #   summary    compact one-line distribution, e.g. "2 need you | 5 running"
+  param([object[]]$Tasks)
+
+  $res = @{
+    counts  = @{}
+    total   = 0
+    needing = @()
+    working = 0
+    settled = 0
+    summary = ''
+  }
+  if ($null -eq $Tasks) { return $res }
+
+  $alerts = @()
+  foreach ($t in $Tasks) {
+    if ($null -eq $t) { continue }
+    $res.total++
+    $st = [string](Get-OrbPropertyValue $t 'state')
+    if (-not $st) { $st = 'DISCONNECTED' }
+    if ($res.counts.ContainsKey($st)) { $res.counts[$st] = $res.counts[$st] + 1 }
+    else { $res.counts[$st] = 1 }
+    if ($st -eq 'RUNNING' -or $st -eq 'STALE') { $res.working++ }
+    if ($st -eq 'DONE' -or $st -eq 'IDLE') { $res.settled++ }
+    if ($script:OrbAlertStates -contains $st) {
+      $u = [long]0
+      try { $u = [long](Get-OrbPropertyValue $t 'updatedAt') } catch { $u = [long]0 }
+      $p = $script:OrbStatePriority[$st]
+      if ($null -eq $p) { $p = 99 }
+      $alerts += @{
+        state     = $st
+        title     = [string](Get-OrbPropertyValue $t 'title')
+        sessionId = [string](Get-OrbPropertyValue $t 'sessionId')
+        priority  = [int]$p
+        updatedAt = $u
+      }
+    }
+  }
+
+  # Triage order. The elements are HASHTABLES, and on PS 5.1 a Sort-Object
+  # property given as @{Expression='priority'} resolves a literal PROPERTY
+  # name, which a hashtable does not have - the level is silently dropped and
+  # the list comes back ordered by the other key alone. A scriptblock
+  # expression reads the key correctly. (Verified on 5.1.19041: the string
+  # form yields s5,s4,s2; the scriptblock form yields s5,s2,s4.)
+  $res.needing = @($alerts | Sort-Object -Property `
+    @{ Expression = { $_.priority }; Ascending = $true }, `
+    @{ Expression = { $_.updatedAt }; Descending = $true })
+
+  $parts = @()
+  $needCount = @($res.needing).Count
+  if ($needCount -gt 0) { $parts += ("{0} need you" -f $needCount) }
+  if ($res.working -gt 0) { $parts += ("{0} running" -f $res.working) }
+  if ($res.settled -gt 0) { $parts += ("{0} settled" -f $res.settled) }
+  $res.summary = ($parts -join ' | ')
+  return $res
+}
+
 function Test-OrbRedactedBody {
   # True when EVERY task in a 200 body carries the redaction placeholder title
   # '(paired)' plus an empty summary. Outside pocketStrict mode the server
@@ -222,7 +295,8 @@ function Resolve-OrbPoll {
   #
   # Returns a hashtable:
   #   state, taskTitle, taskSummary, taskCount, detail, cacheStale,
-  #   unauthorized, offline, toastShouldFire, markerMs, markerSeenMs
+  #   unauthorized, offline, toastShouldFire, markerMs, markerSeenMs,
+  #   fleet (see Get-OrbFleet: counts/total/needing/working/settled/summary)
   param(
     [object]$Poll = $null,
     [object]$Previous = $null,
@@ -288,6 +362,7 @@ function Resolve-OrbPoll {
     toastShouldFire  = $false
     markerMs         = $prevMarkerMs
     markerSeenMs     = $prevMarkerSeenMs
+    fleet            = (Get-OrbFleet -Tasks @())
   }
 
   switch ($kind) {
@@ -381,6 +456,10 @@ function Resolve-OrbPoll {
         $res.taskCount = 0
         break
       }
+      # Fleet shape is computed from EVERY task, independently of which one
+      # the single orb samples - that sampling is what collapsed a 27-task
+      # snapshot into one glyph.
+      $res.fleet = Get-OrbFleet -Tasks $tasks
       $best = Select-OrbTask -Tasks $tasks
       $res.taskCount = $tasks.Count
       if ($null -eq $best) {
