@@ -1,4 +1,4 @@
-<#
+﻿<#
   orb-widget.ps1 — always-on-top DSH desktop companion for Windows (v5).
 
   Per-pixel-alpha layered window: only the orb, energy rings and particles are

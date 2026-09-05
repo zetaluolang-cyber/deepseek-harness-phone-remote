@@ -95,6 +95,35 @@ jobs:
       - name: Launcher ownership regression (dummy :3080 + owned-kill)
         shell: pwsh
         run: ./test/launcher-ownership.ps1
+      - name: PS 5.1 parse + BOM guard (non-ASCII .ps1 must keep its UTF-8 BOM)
+        shell: powershell
+        run: |
+          # Windows PowerShell 5.1 reads a BOM-LESS file as system-ANSI, which
+          # shreds every multi-byte character. scripts/orb-widget.ps1 carries
+          # state glyphs, so losing its BOM turned it into 18 parse errors -
+          # invisible to the Linux pwsh 7 parse job, which reads UTF-8 by
+          # default. Parse on the interpreter that actually runs these files,
+          # and require the BOM wherever non-ASCII exists.
+          $bad = 0
+          Get-ChildItem -Path . -Recurse -Filter *.ps1 |
+            Where-Object { $_.FullName -notmatch '\node_modules\' } |
+            ForEach-Object {
+              $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+              $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+              $nonAscii = $false
+              foreach ($b in $bytes) { if ($b -gt 127) { $nonAscii = $true; break } }
+              if ($nonAscii -and -not $hasBom) {
+                Write-Host "::error::$($_.FullName) contains non-ASCII but has no UTF-8 BOM - PS 5.1 will mis-decode it"
+                $bad++
+              }
+              $errs = $null
+              [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errs) | Out-Null
+              if ($errs.Count -gt 0) {
+                Write-Host "::error::$($_.FullName) fails to parse under PS 5.1: $($errs[0].Message) (line $($errs[0].Extent.StartLineNumber))"
+                $bad++
+              }
+            }
+          if ($bad -gt 0) { Write-Error "$bad PowerShell file problem(s) under 5.1"; exit 1 }
       - name: Syntax check every lib file on Windows
         run: |
           Get-ChildItem remfs-persistent/lib -Recurse -Filter *.js | ForEach-Object {
