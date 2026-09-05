@@ -88,6 +88,37 @@ function Stop-OwnedHarnessStack {
 # recreates the original missing-module bug class.
 $script:RemfsPluginPackage = "remfs-persistent"
 
+# DSH's typert/client-module loaders feed package.json directly to JSON.parse(),
+# which rejects an otherwise valid UTF-8 manifest when Windows PowerShell has
+# prepended a BOM (U+FEFF). Validate the manifest before launch and self-heal
+# that one safe encoding defect. Keep a recovery copy beside the manifest; all
+# other JSON damage fails closed instead of reaching the loader.
+function Repair-RemfsPackageJson {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $false }
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($Path)
+        $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and
+            $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+        if ($hasBom) {
+            $clean = New-Object byte[] ($bytes.Length - 3)
+            [Array]::Copy($bytes, 3, $clean, 0, $clean.Length)
+        } else {
+            $clean = $bytes
+        }
+        $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $text = $strictUtf8.GetString($clean)
+        $null = $text | ConvertFrom-Json -ErrorAction Stop
+        if ($hasBom) {
+            Copy-Item -LiteralPath $Path -Destination ($Path + ".bom-backup") -Force
+            [System.IO.File]::WriteAllBytes($Path, $clean)
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 # READ-ONLY pre-flight: the vendor package root and the node_modules target
 # directory must exist. Call BEFORE killing anything.
 function Test-RemfsPluginReady {
@@ -109,10 +140,13 @@ function Sync-RemfsPlugin {
     # required up front; this function owns creating the destination.
     if (-not $Vendor -or -not (Test-Path (Join-Path $Vendor "package.json")) -or
         -not (Test-Path (Join-Path $Vendor "lib")) -or -not $NmPkg) { return $false }
+    $vendorManifest = Join-Path $Vendor "package.json"
+    if (-not (Repair-RemfsPackageJson -Path $vendorManifest)) { return $false }
     New-Item -ItemType Directory -Force -Path $NmPkg | Out-Null
     # package.json
-    Copy-Item (Join-Path $Vendor "package.json") (Join-Path $NmPkg "package.json") -Force -ErrorAction SilentlyContinue
-    if (-not (Test-Path (Join-Path $NmPkg "package.json"))) { return $false }
+    $targetManifest = Join-Path $NmPkg "package.json"
+    Copy-Item $vendorManifest $targetManifest -Force -ErrorAction SilentlyContinue
+    if (-not (Repair-RemfsPackageJson -Path $targetManifest)) { return $false }
     # the ENTIRE lib/ directory tree (recursive) - a per-file list would
     # silently drop new modules
     if (Test-Path (Join-Path $Vendor "lib")) {

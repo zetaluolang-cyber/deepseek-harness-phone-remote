@@ -91,7 +91,8 @@ try {
         foreach ($f in @("lib\host.js", "lib\client.js", "lib\security.js", "lib\dispatch.js", "package.json")) {
             $dst = Join-Path $vendor $f
             New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
-            [System.IO.File]::WriteAllText($dst, "// $f")
+            $contents = if ($f -eq "package.json") { '{"name":"remfs-sync-fixture"}' } else { "// $f" }
+            [System.IO.File]::WriteAllText($dst, $contents)
         }
         # synthetic EXTRA module that a per-file list would never copy
         [System.IO.File]::WriteAllText((Join-Path $vendor "lib\extra-module.js"), "// extra")
@@ -113,6 +114,27 @@ try {
                 exit 1
             }
         }
+        # Windows PowerShell's UTF8 writer can prepend EF BB BF. DSH passes the
+        # manifest directly to JSON.parse(), so startup must strip this safe
+        # encoding defect from vendor and the copied node_modules manifest.
+        $manifest = Join-Path $vendor "package.json"
+        $payload = [System.Text.Encoding]::UTF8.GetBytes('{"name":"bom-fixture"}')
+        $withBom = New-Object byte[] ($payload.Length + 3)
+        [Array]::Copy([byte[]](0xEF, 0xBB, 0xBF), 0, $withBom, 0, 3)
+        [Array]::Copy($payload, 0, $withBom, 3, $payload.Length)
+        [System.IO.File]::WriteAllBytes($manifest, $withBom)
+        if (-not (Sync-RemfsPlugin -Vendor $vendor -NmPkg $nm)) {
+            Write-Error "Sync-RemfsPlugin failed to repair a BOM manifest"
+            exit 1
+        }
+        foreach ($candidate in @($manifest, (Join-Path $nm "package.json"))) {
+            $bytes = [System.IO.File]::ReadAllBytes($candidate)
+            if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+                Write-Error "self-heal left a UTF-8 BOM in '$candidate'"
+                exit 1
+            }
+            $null = (Get-Content -LiteralPath $candidate -Raw) | ConvertFrom-Json
+        }
         # source guard: the sync must not be a per-file list
         $commonSrc = Get-Content (Join-Path $root "harness-common.ps1") -Raw
         if ($commonSrc -match '\$script:RemfsPluginFiles\s*=\s*@\(') {
@@ -123,7 +145,7 @@ try {
             Write-Error "Sync-RemfsPlugin must copy the whole lib/ tree recursively"
             exit 1
         }
-        Write-Host "self-heal sync: OK (complete lib/ tree incl. synthetic extra module + nested subdir)"
+        Write-Host "self-heal sync: OK (complete lib/ tree + BOM-safe package manifest)"
     } finally {
         Remove-Item $syncDir -Recurse -Force -ErrorAction SilentlyContinue
     }

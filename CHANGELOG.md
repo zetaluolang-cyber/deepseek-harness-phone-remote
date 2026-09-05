@@ -2,6 +2,13 @@
 
 All notable changes to `@zetaluolang/remfs-persistent` and the deploy package.
 
+## Unreleased
+
+- **BOM-safe plugin startup** — launcher preflight now validates the remfs
+  package manifest and safely strips a Windows PowerShell UTF-8 BOM (retaining
+  a recovery copy) before syncing it into `node_modules`. Other malformed JSON
+  still fails closed, preventing an opaque DSH loader-tree crash.
+
 ## [1.4.0] — 2026-08 (push reliability + orb widget hardening)
 
 ### Phone push
