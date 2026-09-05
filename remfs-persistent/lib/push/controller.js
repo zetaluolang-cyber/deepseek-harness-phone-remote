@@ -21,6 +21,11 @@ const PRUNE_EVERY_MS = 60 * 1000
 /** Per-session cooldown: never push the same session twice within this window
  *  (repeated cycles must not spam), independent of the triple dedupe map. */
 export const SESSION_PUSH_COOLDOWN_MS = 2 * 60 * 1000
+/** A cycle still in flight after this long is treated as lost and its lock
+ *  released. presence.tasks() decompresses every persisted session log, so
+ *  a slow cycle is normal and the budget must be far above it; what this
+ *  catches is a cycle that never returns at all. */
+export const TICK_BUDGET_MS = 3 * 60 * 1000
 
 /** Clamp a task turnCycle to a finite non-negative integer (0 when absent). */
 export function normalizeTurnCycle(raw) {
@@ -71,10 +76,29 @@ export function createPushController(deps) {
   } = deps
   const pushOpts = (options && options.push) || {}
   const doneEnabled = !!pushOpts.done
-  const intervalMs = Math.max(5000, Math.min(60000, Number(pushOpts.intervalSeconds) || 10)) * 1000
+  // The clamp is on SECONDS. It used to carry millisecond bounds and then
+  // multiply by 1000 as well: Math.max(5000, Math.min(60000, 10)) is 5000,
+  // so the default 10-second dispatcher actually ran every 5,000,000 ms -
+  // 83 minutes. Nothing hung and nothing threw, so no log ever appeared;
+  // the only symptom was a presence snapshot that looked frozen, which the
+  // desktop companion had been reporting as 'cache stale' all along.
+  const intervalSec = Math.max(5, Math.min(60, Number(pushOpts.intervalSeconds) || 10))
+  const intervalMs = intervalSec * 1000
 
   let timer = null
+  // A tick that THROWS is handled by the catch below. A tick that HANGS was
+  // not handled at all: `running` stayed true, every later cycle returned
+  // {skipped:true} immediately, and the dispatcher stopped forever with no
+  // log, no push, and a presence snapshot frozen at its last success.
+  // Observed live: 40 minutes stalled, then reproduced within ~90s of a
+  // restart. The interval is the only thing that can notice, so it does:
+  // a tick still in flight past this budget is declared lost, `running` is
+  // released, and the next cycle starts fresh.
   let running = false
+  let runStartedAt = 0
+  let abandoned = 0
+  // { code, count } while presence.tasks() keeps failing; null when healthy.
+  let lastTasksError = null
   let lastPrune = 0
   // Per-session cooldown (in-memory; the persisted triple dedupe map survives
   // restarts): last tick time a push was dispatched for each sessionId.
@@ -95,14 +119,50 @@ export function createPushController(deps) {
 
   /** Run one dispatch cycle (exported for tests). */
   async function tick(now = Date.now()) {
-    if (running) return { skipped: true }
+    if (running) {
+      const heldMs = now - runStartedAt
+      if (runStartedAt > 0 && heldMs >= TICK_BUDGET_MS) {
+        // The previous tick is past its budget. It may still resolve later;
+        // its writes are idempotent (dedupe keys, atomic store writes), so
+        // releasing the lock is safe and is the only way to recover.
+        abandoned += 1
+        log('previous cycle exceeded ' + Math.round(TICK_BUDGET_MS / 1000) + 's and was abandoned (' + abandoned + ' total) - starting a fresh cycle')
+        running = false
+        runStartedAt = 0
+      } else {
+        return { skipped: true }
+      }
+    }
     running = true
+    runStartedAt = now
     try {
       const r = await tasks()
       if (r && r.ok && r.value) {
         lastSnapshot = { ok: true, value: r.value, cachedAt: new Date().toISOString() }
+        if (lastTasksError) { log('presence recovered after ' + lastTasksError.count + ' failed cycle(s) (' + lastTasksError.code + ')'); lastTasksError = null }
       }
-      if (!(r && r.ok) || !r.value || !Array.isArray(r.value.tasks)) return { skipped: false, pushed: 0 }
+      if (!(r && r.ok) || !r.value || !Array.isArray(r.value.tasks)) {
+        // A FAILING presence call used to be completely silent: lastSnapshot
+        // simply stopped advancing while the HTTP route kept serving the last
+        // good one as if it were current. From outside, a dispatcher whose
+        // source went bad was indistinguishable from a quiet system - the
+        // snapshot just froze, for 40 minutes, with an empty log.
+        // The snapshot is deliberately KEPT (a consumer that can reason about
+        // staleness, like the desktop companion, does better with old data
+        // plus its own freshness check than with nothing), but the reason is
+        // now on the record. Repeats are counted, not reprinted.
+        const code = (r && r.error && r.error.code) || (r && r.ok ? 'malformed-tasks-envelope' : 'no-response')
+        if (lastTasksError && lastTasksError.code === code) {
+          lastTasksError.count += 1
+          if (lastTasksError.count % 30 === 0) {
+            log('presence still failing (' + code + ') after ' + lastTasksError.count + ' cycles; snapshot frozen at ' + (lastSnapshot ? lastSnapshot.cachedAt : 'never'))
+          }
+        } else {
+          lastTasksError = { code, count: 1 }
+          log('presence.tasks failed (' + code + ') - the served snapshot is now FROZEN at ' + (lastSnapshot ? lastSnapshot.cachedAt : 'never') + ' and no push can fire until it recovers')
+        }
+        return { skipped: false, pushed: 0, tasksError: code }
+      }
       const vapid = await store.ensureVapid()
       const subject = await store.subjectOf()
       const subs = await store.subscriptions()
