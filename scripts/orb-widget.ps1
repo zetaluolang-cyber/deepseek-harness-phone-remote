@@ -158,6 +158,24 @@ try { [DpiNative]::SetProcessDPIAware() | Out-Null } catch { }
 $posFile = Join-Path $env:USERPROFILE '.dsh\orb-widget-pos.json'
 $logFile = Join-Path $env:USERPROFILE '.dsh\orb-widget.log'
 $companionTokenFile = Join-Path $env:USERPROFILE '.dsh\remfs-companion-token'
+# Liveness beacon. A supervision tool that dies silently is worse than no
+# tool at all: you go on believing something is watching. This companion
+# died once from a parse error and the only way anyone found out was a human
+# noticing the ball was gone. Every poll stamps this file; watchdog.ps1
+# (already scheduled every 5 minutes for the harness) treats a stale stamp as
+# 'the companion is dead' and relaunches it. Plain ASCII epoch seconds.
+$heartbeatFile = Join-Path $env:USERPROFILE '.dsh\orb-widget.heartbeat'
+function Write-Heartbeat {
+  # Defined AFTER $heartbeatFile is assigned: PowerShell resolves the
+  # variable at call time, but keeping them adjacent is what makes that
+  # obvious to the next reader.
+  # Best-effort - a failed beacon write must never take the widget down; a
+  # missing or stale file simply reads as 'not alive' to the watchdog.
+  try {
+    $epoch = [int][double]::Parse((Get-Date -UFormat %s))
+    [System.IO.File]::WriteAllText($heartbeatFile, $epoch.ToString())
+  } catch { }
+}
 $LOG_MAX_BYTES = 1MB
 
 # Dedupe + rotate. A per-frame failure (e.g. a paint error at 25fps) must not
@@ -899,6 +917,7 @@ function Update-CompanionTokenHeader {
 }
 
 function PollOnce {
+  Write-Heartbeat
   if ($null -ne $poll.task) { return } # one request in flight at a time
   try {
     Update-CompanionTokenHeader
