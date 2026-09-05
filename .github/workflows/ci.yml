@@ -106,7 +106,7 @@ jobs:
           # and require the BOM wherever non-ASCII exists.
           $bad = 0
           Get-ChildItem -Path . -Recurse -Filter *.ps1 |
-            Where-Object { $_.FullName -notmatch '\node_modules\' } |
+            Where-Object { $_.FullName -notmatch '\\node_modules\\' } |
             ForEach-Object {
               $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
               $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
