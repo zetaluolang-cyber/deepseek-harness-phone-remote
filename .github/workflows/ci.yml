@@ -38,7 +38,13 @@ jobs:
           $files = @('install.ps1', 'keep_awake.ps1', 'restart_harness.ps1', 'restart_harness_once.ps1', 'stop_harness.ps1', 'start_harness.template.ps1', 'harness-common.ps1', 'refresh_pairing.ps1', 'watchdog.ps1', 'test/installer-patch.integration.ps1')
           $bad = @()
           foreach ($f in $files) {
-            $hits = Select-String -Path $f -Pattern 'C:\\Users\\[A-Za-z]' -ErrorAction SilentlyContinue
+            # Only real CODE may carry a maintainer path check. Comment lines
+            # are skipped: start_harness.template.ps1 legitimately documents the
+            # PS 5.1 quoting quirk using an example path, and flagging that turns
+            # this guard into noise a reviewer learns to ignore - which is exactly
+            # how a guard stops guarding.
+            $hits = Select-String -Path $f -Pattern 'C:\\Users\\[A-Za-z]' -ErrorAction SilentlyContinue |
+              Where-Object { $_.Line -notmatch '^\s*#' }
             if ($hits) { $bad += "$f : " + (($hits | ForEach-Object { $_.LineNumber }) -join ',') }
           }
           if ($bad.Count -gt 0) { Write-Error "Maintainer-specific C:\Users\<name> paths found: $($bad -join '; ')"; exit 1 }

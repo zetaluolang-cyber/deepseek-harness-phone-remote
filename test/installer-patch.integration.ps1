@@ -168,7 +168,30 @@ try {
         # host channel registered. This is the other half of every upstream
         # upgrade breakage (the loader row names a client module; if the web
         # server does not serve it the phone gets a dead workbench and no
-        # error anywhere). Try the documented route shapes.
+        # error anywhere).
+        #
+        # "host applied: /remfs" is logged during plugin apply, which runs while
+        # the composition is still being assembled - the HTTP listener binds
+        # AFTER that. Fetching immediately raced the listener and produced
+        # "Connection refused (127.0.0.1:3182)" on a perfectly healthy boot.
+        # Wait for the port to accept, then assert the routes.
+        $ready = $false
+        for ($w = 0; $w -lt 60; $w++) {
+            try {
+                $probe = [System.Net.Sockets.TcpClient]::new()
+                $probe.Connect('127.0.0.1', 3182)
+                $probe.Close()
+                $ready = $true
+                break
+            } catch {
+                Start-Sleep -Milliseconds 500
+            }
+        }
+        if (-not $ready) {
+            Write-Error "real-DSH boot: /remfs registered but 127.0.0.1:3182 never accepted a connection within 30s.`nLog:`n$(Get-Content $log -Raw -ErrorAction SilentlyContinue)"
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            exit 1
+        }
         $clientOk = $false
         $clientTried = @()
         foreach ($route in @(
