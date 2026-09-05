@@ -1,4 +1,4 @@
-﻿<#
+<#
   orb-widget.ps1 — always-on-top DSH desktop companion for Windows (v5).
 
   Per-pixel-alpha layered window: only the orb, energy rings and particles are
@@ -666,7 +666,7 @@ $form.Add_MouseDown({
       $nx = [Math]::Max($wa.Left, [Math]::Min($wa.Right - $CARD_W, $form.Left))
       $ny = [Math]::Max($wa.Top, [Math]::Min($wa.Bottom - $CARD_H, $form.Top))
       $form.Location = [System.Drawing.Point]::new($nx, $ny)
-      try { @{ x = $form.Left; y = $form.Top } | ConvertTo-Json | Set-Content -Path $posFile -Encoding UTF8 } catch { }
+      try { [System.IO.File]::WriteAllText($posFile, (@{ x = $form.Left; y = $form.Top } | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false)) } catch { }
     } elseif (-not $wasVisible) {
       # A drag was not needed and the panel was closed: this is a click that
       # opens the panel. When the panel WAS open, it stays hidden (click

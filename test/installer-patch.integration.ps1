@@ -173,8 +173,7 @@ try {
         # "host applied: /remfs" is logged during plugin apply, which runs while
         # the composition is still being assembled - the HTTP listener binds
         # AFTER that. Fetching immediately raced the listener and produced
-        # "Connection refused (127.0.0.1:3182)" on a perfectly healthy boot.
-        # Wait for the port to accept, then assert the routes.
+        # "Connection refused" on a perfectly healthy boot. Wait for accept.
         $ready = $false
         for ($w = 0; $w -lt 60; $w++) {
             try {
@@ -192,12 +191,44 @@ try {
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             exit 1
         }
+        # Take the module URL from UPSTREAM'S OWN LOADER TABLE
+        # (window.__DSH_BOOT__.entries), never from a hard-coded guess. The
+        # route shape is upstream's and has already changed once: the literal
+        # /plugins/<pkg>/client.js served 200 on dsh 0.1.0-rc.6 and 404s on
+        # 0.1.2-rc.1, which also carries a ?rev= cache stamp. A guessed route
+        # that is wrong blames the product for an upstream change; a guessed
+        # route that is lucky silently stops covering anything. Reading the
+        # boot table asserts the thing that actually matters: the shell says it
+        # will load our module, AND that URL really serves it.
         $clientOk = $false
         $clientTried = @()
-        foreach ($route in @(
-            "http://127.0.0.1:3182/plugins/@zetaluolang/remfs-persistent/client.js",
-            "http://127.0.0.1:3182/plugins/remfs-persistent/client.js"
-        )) {
+        $bootUrl = $null
+        try {
+            $shell = Invoke-WebRequest -Uri "http://127.0.0.1:3182/" -UseBasicParsing -TimeoutSec 15
+            $m = [regex]::Match($shell.Content, 'window\.__DSH_BOOT__\s*=\s*(\{.*?\})\s*;?\s*</script>', 'Singleline')
+            if (-not $m.Success) {
+                Write-Error "real-DSH boot: the GUI page carries no window.__DSH_BOOT__ loader table - upstream shell format changed; this assertion needs updating."
+                Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+                exit 1
+            }
+            $boot = $m.Groups[1].Value | ConvertFrom-Json
+            $entry = $boot.entries | Where-Object { $_.id -eq '@zetaluolang/remfs-persistent' } | Select-Object -First 1
+            if (-not $entry) {
+                $ids = ($boot.entries | ForEach-Object { $_.id }) -join ', '
+                Write-Error "real-DSH boot: the shell loader table does NOT list @zetaluolang/remfs-persistent - the phone would get a dead workbench.`nEntries offered: $ids"
+                Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+                exit 1
+            }
+            $bootUrl = $entry.url
+            $clientTried += "boot table lists the module at $bootUrl"
+        } catch {
+            $clientTried += "GUI page -> $($_.Exception.Message)"
+        }
+        $routes = @()
+        if ($bootUrl) {
+            if ($bootUrl -match '^https?://') { $routes += $bootUrl } else { $routes += "http://127.0.0.1:3182$bootUrl" }
+        }
+        foreach ($route in $routes) {
             try {
                 $resp = Invoke-WebRequest -Uri $route -UseBasicParsing -TimeoutSec 10
                 $clientTried += "$route -> HTTP $($resp.StatusCode), $($resp.Content.Length) bytes"
