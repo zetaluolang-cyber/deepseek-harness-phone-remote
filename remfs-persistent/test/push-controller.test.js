@@ -12,7 +12,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { createPushStore } from '../lib/push/store.js'
-import { createPushController, buildPushPayload, normalizeTurnCycle, SESSION_PUSH_COOLDOWN_MS } from '../lib/push/controller.js'
+import { createPushController, buildPushPayload, normalizeTurnCycle, SESSION_PUSH_COOLDOWN_MS, TICK_BUDGET_MS } from '../lib/push/controller.js'
 import { sendPush } from '../lib/push/webpush.js'
 import { generateVapidKeys } from '../lib/push/vapid.js'
 import { createECDH } from 'node:crypto'
@@ -260,4 +260,129 @@ test('dispatch: successful sends stamp lastDeliveredAt; failures stamp lastError
   assert.ok(sub.lastDeliveredAt >= t0 + 10 * 60 * 1000, 'a delivered push stamps lastDeliveredAt')
   assert.equal(sub.lastError, null, 'a success clears the recorded error')
   assert.equal(sub.lastErrorAt, null)
+})
+
+// ------------------------------------------------- hung-cycle watchdog
+// Observed live: the dispatcher stopped for 40 minutes and reproduced within
+// ~90s of a restart. A tick that THREW was caught; a tick that HUNG held
+// `running` forever, so every later cycle returned {skipped:true} with no log,
+// no push, and a presence snapshot frozen at its last success.
+test('dispatch: a hung cycle is abandoned after the budget so the loop recovers', async (t) => {
+  const { store } = await setup(t)
+  await store.addSubscription('dev1', realishSub(1), 'en')
+  let calls = 0
+  let sent = 0
+  const controller = createPushController({
+    // First call never resolves (the real hang); later calls answer normally.
+    tasks: () => {
+      calls++
+      if (calls === 1) return new Promise(() => {})
+      return Promise.resolve(needsUserTask())
+    },
+    store,
+    isDeviceValid: async () => true,
+    options: { push: { done: false, intervalSeconds: 10 } },
+    log: () => {},
+    sender: async () => { sent++; return { status: 'sent' } },
+  })
+  const t0 = 1_000_000
+  // The hung cycle starts and does not return.
+  const hung = controller.tick(t0)
+  assert.equal(calls, 1)
+  // Inside the budget the lock still holds - a slow cycle must not be killed.
+  assert.deepEqual(await controller.tick(t0 + TICK_BUDGET_MS - 1000), { skipped: true },
+    'a cycle inside its budget must keep the lock')
+  assert.equal(calls, 1, 'no new cycle may start while the previous one is still within budget')
+  // Past the budget the lock is released and a fresh cycle runs to completion.
+  const recovered = await controller.tick(t0 + TICK_BUDGET_MS + 1000)
+  assert.equal(calls, 2, 'a fresh cycle must start once the hung one is abandoned')
+  assert.equal(recovered.pushed, 1, 'the recovered cycle must actually deliver')
+  assert.equal(sent, 1)
+  // The abandoned promise is still pending; nothing above awaited it.
+  assert.ok(hung instanceof Promise)
+})
+
+test('dispatch: a normal cycle releases its lock immediately (no false abandon)', async (t) => {
+  const { store } = await setup(t)
+  await store.addSubscription('dev1', realishSub(1), 'en')
+  let abandonLogs = 0
+  const controller = createPushController({
+    tasks: async () => needsUserTask(),
+    store,
+    isDeviceValid: async () => true,
+    options: { push: { done: false, intervalSeconds: 10 } },
+    log: (m) => { if (/abandon/i.test(m)) abandonLogs++ },
+    sender: async () => ({ status: 'sent' }),
+  })
+  await controller.tick(1_000_000)
+  await controller.tick(1_000_000 + 10_000)
+  assert.equal(abandonLogs, 0, 'a healthy cycle must never be reported as abandoned')
+})
+
+test('dispatch: a failing presence source is logged, not silently frozen', async (t) => {
+  const { store } = await setup(t)
+  await store.addSubscription('dev1', realishSub(1), 'en')
+  const logs = []
+  let mode = 'ok'
+  const controller = createPushController({
+    tasks: async () => (mode === 'ok'
+      ? needsUserTask()
+      : { ok: false, error: { code: 'sessions-unavailable', message: 'shape drift' } }),
+    store,
+    isDeviceValid: async () => true,
+    options: { push: { done: false, intervalSeconds: 10 } },
+    log: (m) => logs.push(m),
+    sender: async () => ({ status: 'sent' }),
+  })
+  await controller.tick(1_000_000)
+  const good = controller.snapshot()
+  assert.ok(good && good.cachedAt, 'a healthy cycle must produce a snapshot')
+
+  // The source goes bad: the snapshot is kept (consumers reason about
+  // staleness themselves) but the reason must reach the log ONCE.
+  mode = 'bad'
+  const r = await controller.tick(1_010_000)
+  assert.equal(r.tasksError, 'sessions-unavailable')
+  assert.equal(controller.snapshot().cachedAt, good.cachedAt, 'the stale snapshot is kept, not cleared')
+  const first = logs.filter((m) => /presence\.tasks failed/.test(m))
+  assert.equal(first.length, 1, 'the first failure must be logged exactly once')
+  assert.match(first[0], /sessions-unavailable/)
+  assert.match(first[0], /FROZEN/)
+
+  // Repeats are counted, not reprinted - a 10s loop must not spam the log.
+  for (let i = 2; i <= 20; i++) await controller.tick(1_010_000 + i * 10_000)
+  assert.equal(logs.filter((m) => /presence\.tasks failed/.test(m)).length, 1,
+    'a persistent failure must not reprint every cycle')
+
+  // Recovery is announced, so the log shows the outage had an end.
+  mode = 'ok'
+  await controller.tick(1_400_000)
+  assert.equal(logs.filter((m) => /presence recovered/.test(m)).length, 1)
+  assert.notEqual(controller.snapshot().cachedAt, good.cachedAt, 'recovery must refresh the snapshot')
+})
+
+test('dispatch: the poll interval is seconds, clamped to 5..60 - not 83 minutes', async (t) => {
+  const { store } = await setup(t)
+  const make = (intervalSeconds) => createPushController({
+    tasks: async () => needsUserTask(),
+    store,
+    isDeviceValid: async () => true,
+    options: { push: { done: false, intervalSeconds } },
+    log: () => {},
+    sender: async () => ({ status: 'sent' }),
+  })
+  // The clamp used to carry millisecond bounds AND multiply by 1000, so every
+  // input collapsed to 5_000_000ms. The dispatcher looked healthy - no hang,
+  // no throw, no log - while only running about once every 83 minutes.
+  assert.equal(make(undefined).intervalMs, 10_000, 'the default must be 10 seconds')
+  assert.equal(make(10).intervalMs, 10_000)
+  assert.equal(make(30).intervalMs, 30_000, 'a configured value must be honoured')
+  assert.equal(make(5).intervalMs, 5_000, 'lower bound')
+  assert.equal(make(60).intervalMs, 60_000, 'upper bound')
+  assert.equal(make(1).intervalMs, 5_000, 'below the floor clamps up, never down to nothing')
+  assert.equal(make(600).intervalMs, 60_000, 'above the ceiling clamps down')
+  assert.equal(make('bogus').intervalMs, 10_000, 'garbage falls back to the default')
+  for (const v of [undefined, 10, 30, 5, 60, 1, 600]) {
+    assert.ok(make(v).intervalMs <= 60_000, 'no input may ever exceed a minute, got ' + make(v).intervalMs)
+  }
 })
