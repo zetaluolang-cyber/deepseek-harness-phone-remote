@@ -85,10 +85,60 @@ if (-not $marker) {
     exit 1
 }
 
+function Test-CompanionAlive {
+    # The desktop companion stamps ~/.dsh/orb-widget.heartbeat on every poll
+    # (default 8s). A stamp older than this budget, or no file at all, means
+    # it is not running - it died, or it never started. Generous on purpose:
+    # a laptop resuming from sleep must not trigger a relaunch storm.
+    #
+    # Written as one assignment with a single output so it CANNOT leak extra
+    # pipeline values: a PowerShell function returns everything that was not
+    # consumed, so an early `return $false` after a statement that emitted
+    # something yields an array, and `if (-not $array)` is false - the guard
+    # then reports 'alive' unconditionally, which is exactly how the first
+    # version of this function passed every case including 'file missing'.
+    param([int]$MaxAgeSeconds = 120)
+    $beacon = Join-Path $env:USERPROFILE ('.dsh\orb-widget.heartbeat')
+    $alive = $false
+    if (Test-Path -LiteralPath $beacon) {
+        try {
+            $raw = ([string](Get-Content -LiteralPath $beacon -Raw -ErrorAction Stop)).Trim()
+            if ($raw -match '^[0-9]+$') {
+                $now = [int][double]::Parse((Get-Date -UFormat %s))
+                $age = $now - [int]$raw
+                $alive = ($age -ge 0 -and $age -le $MaxAgeSeconds)
+            }
+        } catch {
+            $alive = $false
+        }
+    }
+    return [bool]$alive
+}
+
+function Restore-Companion {
+    # Relaunch the companion the same way the Startup entry does. Single
+    # instance is enforced by a named mutex inside the widget, so a spurious
+    # relaunch is harmless - it exits immediately.
+    $orb = Join-Path $scriptDir 'orb-widget.ps1'
+    if (-not (Test-Path $orb)) {
+        Write-WatchdogLog 'companion: orb-widget.ps1 not deployed - skipping'
+        return
+    }
+    try {
+        Start-Process powershell.exe -ArgumentList @('-NoProfile','-STA','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File', ('"' + $orb + '"')) | Out-Null
+        Write-WatchdogLog 'companion: was not alive - relaunched'
+    } catch {
+        Write-WatchdogLog ('companion: relaunch threw - ' + $_.Exception.Message)
+    }
+}
+
 $owned = Get-OwnedHarnessPid -Port 3080 -Marker $marker
 if ($null -ne $owned) {
     Reset-WatchdogState
     Write-WatchdogLog "OK: our harness (pid $owned) owns 127.0.0.1:3080"
+    # The harness is healthy; the companion is a SEPARATE process that can die
+    # on its own (and did). Check it here so one scheduled task covers both.
+    if (-not (Test-CompanionAlive)) { Restore-Companion }
     exit 0
 }
 
