@@ -264,7 +264,10 @@ if (-not $restored) {
 # embers) for the two states this widget exists to surface. It was read in
 # three places but never assigned, so NEEDS_USER/FAILED rendered exactly like
 # any other state - Set-State now maintains it.
-$current = @{ state = $P_DISC; title = ''; summary = ''; detail = ''; count = 0; updated = ''; alert = $false }
+# `fleet` is the SHAPE of every task (see Get-OrbFleet), not the single
+# sampled one: with 27 sessions the old display collapsed the whole set
+# into one glyph, which is the wrong unit for supervising a fleet.
+$current = @{ state = $P_DISC; title = ''; summary = ''; detail = ''; count = 0; updated = ''; alert = $false; fleet = $null }
 $fx = @{ time = 0.0; particles = @(); staticPainted = $false; hover = $false }
 
 # ── quick panel ─────────────────────────────────────────────────────────────
@@ -354,11 +357,37 @@ function Update-CompanionPanel {
   $panelStatus.Text = ($glyph + '  ' + $stateText)
   $panelStatus.ForeColor = $P_COLOR[$current.state]
   $panelTitle.Text = if ($current.title) { $current.title } elseif ($current.state -eq $P_IDLE) { '暂无活动任务' } else { $stateText }
+  # Body: when several tasks want you, the useful answer is the QUEUE, not a
+  # re-statement of the one task the orb happened to sample. Diagnostics
+  # (stale cache, unauthorized, offline) still win - they explain why the
+  # numbers below cannot be trusted.
+  $f = $current.fleet
+  $needing = @()
+  if ($null -ne $f) { $needing = @($f.needing) }
   if ($current.detail) { $panelSummary.Text = $current.detail }
+  elseif ($needing.Count -gt 1) {
+    $lines = @()
+    $shown = [Math]::Min(3, $needing.Count)
+    for ($qi = 0; $qi -lt $shown; $qi++) {
+      $item = $needing[$qi]
+      $mark = $P_GLYPH[[string]$item.state]
+      if (-not $mark) { $mark = '?' }
+      $label = [string]$item.title
+      if (-not $label) { $label = [string]$item.sessionId }
+      if ($label.Length -gt 34) { $label = $label.Substring(0, 33) + [char]0x2026 }
+      $lines += ($mark + ' ' + $label)
+    }
+    if ($needing.Count -gt $shown) { $lines += ('… 还有 ' + ($needing.Count - $shown) + ' 个等待处理') }
+    $panelSummary.Text = ($lines -join [Environment]::NewLine)
+  }
   elseif ($current.summary) { $panelSummary.Text = $current.summary }
   elseif ($current.state -eq $P_IDLE) { $panelSummary.Text = 'Harness 已连接，目前没有需要处理的任务。' }
   else { $panelSummary.Text = '等待 Harness 返回任务详情。' }
-  $panelMeta.Text = ('任务 ' + $current.count + $(if ($current.updated) { '  ·  更新 ' + $current.updated } else { '' }))
+  # Meta line: the distribution, so a glance answers 'how many need me / are
+  # working / are settled' instead of just a total.
+  $metaLeft = '任务 ' + $current.count
+  if ($null -ne $f -and $f.summary) { $metaLeft = [string]$f.summary }
+  $panelMeta.Text = ($metaLeft + $(if ($current.updated) { '  ·  更新 ' + $current.updated } else { '' }))
   $panel.Invalidate()
 }
 
@@ -756,7 +785,12 @@ function Invoke-OrbDecision {
     $summary = ''
   }
 
-  Set-State ([string]$d.state) $title $summary $detail $count
+  # The fleet rides along ONLY when the snapshot is live: a stale/
+  # unauthorized/offline poll must not render a distribution the widget
+  # cannot vouch for.
+  $fleet = $null
+  if (-not $d.cacheStale -and -not $d.unauthorized -and -not $d.offline) { $fleet = $d.fleet }
+  Set-State ([string]$d.state) $title $summary $detail $count $fleet
 
   # Toast gating lives in the pure decision: no toast while unauthorized,
   # offline or cache-stale; a fresh transition into NEEDS_USER/FAILED toasts.
@@ -802,7 +836,7 @@ function Show-StateToast([string]$st, [string]$title) {
 }
 
 function Set-State {
-  param([string]$st, [string]$title, [string]$summary = '', [string]$detail = '', [int]$count = 0)
+  param([string]$st, [string]$title, [string]$summary = '', [string]$detail = '', [int]$count = 0, [object]$fleet = $null)
   if ($null -eq $P_PRIORITY[$st]) {
     $detail = if ($detail) { $detail } else { 'Presence 返回未知状态 · ' + $st }
     $st = $P_DISC
@@ -817,6 +851,7 @@ function Set-State {
   $current.summary = $summary
   $current.detail = $detail
   $current.count = $count
+  $current.fleet = $fleet
   $current.updated = Get-Date -Format 'HH:mm:ss'
   # Emphasise exactly the states a human has to act on.
   $current.alert = ($st -eq $P_NEEDS -or $st -eq $P_FAILED)
@@ -825,7 +860,13 @@ function Set-State {
   # tooltip and the panel, so they must not be swallowed here).
   $label = $P_TEXT[$st]
   if (-not $label) { $label = 'Unavailable' }
-  if ($title) { $tip.SetToolTip($form, ($label + ' · ' + $title)) }
+  # Hovering is the cheapest glance there is, so it answers the fleet question
+  # (how many need me) before the single-task one.
+  $tipFleet = ''
+  if ($null -ne $fleet -and $fleet.summary -and [int]$count -gt 1) { $tipFleet = [string]$fleet.summary }
+  if ($tipFleet -and $title) { $tip.SetToolTip($form, ($tipFleet + [Environment]::NewLine + $label + ' · ' + $title)) }
+  elseif ($tipFleet) { $tip.SetToolTip($form, $tipFleet) }
+  elseif ($title) { $tip.SetToolTip($form, ($label + ' · ' + $title)) }
   elseif ($detail) { $tip.SetToolTip($form, $detail) }
   else { $tip.SetToolTip($form, $label) }
   if ($panel.Visible) { Update-CompanionPanel }
