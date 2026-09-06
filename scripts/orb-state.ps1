@@ -167,6 +167,23 @@ function Select-OrbTask {
   return $best
 }
 
+function Get-OrbTaskLabel {
+  # What to SHOW for one task. Preference order:
+  #   1. the user's own opening words  - always meaningful, never generated
+  #   2. the DSH title                 - often missing, or '(paired)' when the
+  #                                      caller is unauthenticated
+  #   3. the session id                - last resort, meaningless to a human
+  # A list of settled sessions is unusable without this: 27 rows of 'DONE'
+  # cannot tell the dev session from the daily-report one.
+  param([object]$Task)
+  if ($null -eq $Task) { return '' }
+  $ask = [string](Get-OrbPropertyValue $Task 'firstAsk')
+  if ($ask) { return $ask }
+  $title = [string](Get-OrbPropertyValue $Task 'title')
+  if ($title -and $title -ne $script:OrbRedactedTitle) { return $title }
+  return [string](Get-OrbPropertyValue $Task 'sessionId')
+}
+
 function Get-OrbFleet {
   # Fleet view: the SHAPE of the whole task set, not one sampled task.
   #
@@ -214,6 +231,9 @@ function Get-OrbFleet {
       $alerts += @{
         state     = $st
         title     = [string](Get-OrbPropertyValue $t 'title')
+        # The DSH-generated title is often absent or a privacy placeholder,
+        # so the user's OWN opening words are the reliable identity.
+        firstAsk  = [string](Get-OrbPropertyValue $t 'firstAsk')
         sessionId = [string](Get-OrbPropertyValue $t 'sessionId')
         priority  = [int]$p
         updatedAt = $u

@@ -390,7 +390,10 @@ function Update-CompanionPanel {
       $item = $needing[$qi]
       $mark = $P_GLYPH[[string]$item.state]
       if (-not $mark) { $mark = '?' }
-      $label = [string]$item.title
+      # Identity first: the user's own opening words beat a title that is
+      # often absent or a redaction placeholder.
+      $label = [string]$item.firstAsk
+      if (-not $label) { $label = [string]$item.title }
       if (-not $label) { $label = [string]$item.sessionId }
       if ($label.Length -gt 34) { $label = $label.Substring(0, 33) + [char]0x2026 }
       $lines += ($mark + ' ' + $label)

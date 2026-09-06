@@ -24,9 +24,10 @@ import {
 import { resolveState, transition } from '../lib/presence/state.js'
 import { summarize, staleReasonLines } from '../lib/presence/summary.js'
 import { validateTaskDTO } from '../lib/presence/api.js'
+import { redactTaskDTO } from '../lib/presence/redact.js'
 import {
   createPresenceService, terminalFailure, hasToolErrorInLastTurn, hasOpenTurn,
-  userTurnCount,
+  userTurnCount, userAsks, ASK_MAX_CHARS,
 } from '../lib/presence/service.js'
 
 // Fixed synthetic base time for PURE state/heartbeat tests: every one of
@@ -692,4 +693,75 @@ test('presence service: sessionQuery unavailable -> fails closed with error', as
   const res = await svc.tasks()
   assert.equal(res.ok, false)
   assert.equal(res.error.code, 'capability-unavailable')
+})
+
+// ---------------------------------------------------- session identity (userAsks)
+// Every case here came from a REAL 17k-event log: the naive version produced
+// 'Failed to load URL ...' and 'Background subagent ... finished' as session
+// identity, because tool/plugin injections also arrive as user-role messages.
+const userMsg = (text, kind = 'user') => ({
+  type: 'user/message',
+  data: { role: 'user', source: { kind }, content: [{ type: 'text', text }] },
+})
+
+test('userAsks: identity is the first and last thing the HUMAN typed', () => {
+  const asks = userAsks([
+    userMsg('帮我整理今天的日报'),
+    userMsg('再加上昨天的'),
+    userMsg('好了 谢谢'),
+  ])
+  assert.equal(asks.first, '帮我整理今天的日报')
+  assert.equal(asks.last, '好了 谢谢')
+})
+
+test('userAsks: plugin and tool injections are not the user speaking', () => {
+  const asks = userAsks([
+    userMsg('Current DSH file policy: workspace-write...', 'plugin'),
+    userMsg('解释一下 RFC 8291'),
+    userMsg('Background subagent db2fa8a9 finished and will do no more work.', 'tool'),
+    userMsg('懂了'),
+    userMsg('Current runtime context. This snapshot supersedes earlier ones.', 'plugin'),
+  ])
+  assert.equal(asks.first, '解释一下 RFC 8291', 'a plugin snapshot must never become the identity')
+  assert.equal(asks.last, '懂了', 'a background-job receipt must never become the closing word')
+})
+
+test('userAsks: content parts are read, never stringified to [object Object]', () => {
+  const asks = userAsks([{
+    type: 'user/message',
+    data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }, { type: 'image' }, { type: 'text', text: 'world' }] },
+  }])
+  assert.equal(asks.first, 'hello world')
+  assert.ok(!/object Object/.test(asks.first))
+})
+
+test('userAsks: whitespace collapses without eating letters', () => {
+  // The first version used /s+/ instead of /\s+/ and turned "https" into
+  // "http ", "Documents" into "Document ". Pin the real behaviour.
+  const asks = userAsks([userMsg('open   https://example.com/some\n\nDocuments\tpath')])
+  assert.equal(asks.first, 'open https://example.com/some Documents path')
+})
+
+test('userAsks: long input is clipped, a single message has no distinct last', () => {
+  const long = 'x'.repeat(500)
+  const asks = userAsks([userMsg(long)])
+  assert.equal(asks.first.length, ASK_MAX_CHARS)
+  assert.ok(asks.first.endsWith('…'))
+  assert.equal(asks.last, '', 'one message must not be echoed as both first and last')
+})
+
+test('userAsks: no observable human text degrades to empty, never throws', () => {
+  assert.deepEqual(userAsks([]), { first: '', last: '' })
+  assert.deepEqual(userAsks(null), { first: '', last: '' })
+  assert.deepEqual(userAsks([userMsg('policy', 'plugin')]), { first: '', last: '' })
+  assert.deepEqual(userAsks([{ type: 'user/message', data: { source: { kind: 'user' }, content: 42 } }]), { first: '', last: '' })
+})
+
+test('redaction: the user own words never reach an unauthenticated caller', () => {
+  const dto = makeTaskDTO({ taskId: 't', sessionId: 's', title: 'T', firstAsk: '帮我整理日报', lastAsk: '好了' })
+  assert.equal(dto.firstAsk, '帮我整理日报')
+  const hidden = redactTaskDTO(dto)
+  assert.equal(hidden.firstAsk, '', 'verbatim user words are at least as sensitive as the title')
+  assert.equal(hidden.lastAsk, '')
+  assert.deepEqual(validateTaskDTO(hidden), [], 'a redacted DTO must still satisfy the frozen v1 shape')
 })

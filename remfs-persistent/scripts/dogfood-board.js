@@ -15,7 +15,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { pathToFileURL } from 'node:url'
-import { zstdDecompressSync } from 'node:zlib'
 
 import { foldHeartbeats, effectiveSystemAliveAt } from '../lib/presence/heartbeat.js'
 import { resolveState } from '../lib/presence/state.js'
@@ -29,75 +28,16 @@ import {
   titleFromEvents, fileChangeCount, userTurnCount, firstTime, lastTime,
 } from '../lib/presence/service.js'
 
-const ZSTD_MAGIC = 4247762216 // 0xFD2FB528
+// The zstd frame scan and JSONL reader now live in lib/presence/sessionlog.js
+// (lib/ needs them too and scripts/ is not shipped in the package), and are
+// re-exported here so existing importers of this CLI keep working.
+// NOTE: a bare `export ... from` only FORWARDS - it does not bind the names
+// in this module, so the local call below would hit an undefined identifier
+// (silently, inside loadSessionsDir's try/catch: every session just vanished
+// from the scan). Import for local use, then re-export explicitly.
+import { scanZstdFrames, loadSessionFile } from '../lib/presence/sessionlog.js'
+export { scanZstdFrames, loadSessionFile }
 
-/**
- * Locate complete zstd frame ranges (same algorithm as DSH's
- * dsh-session-persistence-jsonl scanZstdFrames: concatenated frames, each
- * with its own header, blocks, and optional 4-byte checksum).
- * @param {Buffer} buffer - complete file bytes.
- * @returns {{ frames: Array<{start:number,end:number}> }}
- */
-export function scanZstdFrames(buffer) {
-  const frames = []
-  let offset = 0
-  while (offset < buffer.length) {
-    const start = offset
-    if (buffer.length - offset < 4) break
-    if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) {
-      throw new Error('invalid zstd frame magic at byte ' + offset)
-    }
-    offset += 4
-    if (offset === buffer.length) break
-    const descriptor = buffer.readUInt8(offset)
-    offset += 1
-    const contentSizeFlag = descriptor >>> 6
-    const singleSegment = (descriptor & 32) !== 0
-    const checksum = (descriptor & 4) !== 0
-    const dictionaryFlag = descriptor & 3
-    const dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag
-    const contentSizeBytes = contentSizeFlag === 0 ? (singleSegment ? 1 : 0) : 1 << contentSizeFlag
-    const remainingHeaderBytes = (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes
-    if (buffer.length - offset < remainingHeaderBytes) break
-    offset += remainingHeaderBytes
-    for (;;) {
-      if (buffer.length - offset < 3) return { frames }
-      const blockHeader = buffer.readUIntLE(offset, 3)
-      offset += 3
-      const lastBlock = (blockHeader & 1) !== 0
-      const blockType = (blockHeader >>> 1) & 3
-      const blockSize = blockHeader >>> 3
-      if (blockType === 3) throw new Error('reserved zstd block type at byte ' + (offset - 3))
-      const payloadBytes = blockType === 1 ? 1 : blockSize
-      if (buffer.length - offset < payloadBytes) return { frames }
-      offset += payloadBytes
-      if (lastBlock) break
-    }
-    if (checksum) {
-      if (buffer.length - offset < 4) return { frames }
-      offset += 4
-    }
-    frames.push({ start, end: offset })
-  }
-  return { frames }
-}
-
-/** Decompress one session log file into event records. */
-export function loadSessionFile(file) {
-  const buf = fs.readFileSync(file)
-  const { frames } = scanZstdFrames(buf)
-  const plain = Buffer.concat(frames.map((f) => zstdDecompressSync(buf.subarray(f.start, f.end)))).toString('utf8')
-  const events = []
-  let header = null
-  for (const line of plain.split('\n')) {
-    if (!line.trim()) continue
-    let ev
-    try { ev = JSON.parse(line) } catch { continue }
-    if (ev && ev.type === 'session') { header = ev; continue }
-    events.push(ev)
-  }
-  return { events, header }
-}
 
 /** Scan a sessions root: [{ sessionId, workspaceDir, file, events, header }]. */
 export function loadSessionsDir(dir, max = 500) {
