@@ -505,6 +505,25 @@ window.__ModuleLoader__.load({
         }).catch(() => { /* ignore */ })
       } catch { /* ignore */ }
     }
+    // The DESKTOP companion is a native process: it cannot write the
+    // same-origin Cache flag the Service Worker uses, so it deep-links
+    // through the URL fragment instead - #remfs-session=<id>. Same
+    // consume-once semantics, and the fragment is stripped afterwards so a
+    // refresh does not re-open the session. A fragment never reaches the
+    // server, so this adds no route and leaks no session id off-machine.
+    const REMFS_HASH_PREFIX = '#remfs-session='
+    const consumeHashTarget = () => {
+      try {
+        const h = String(window.location.hash || '')
+        if (h.indexOf(REMFS_HASH_PREFIX) !== 0) return
+        const sessionId = decodeURIComponent(h.slice(REMFS_HASH_PREFIX.length))
+        // Clear first: opening may throw for a session that no longer exists,
+        // and the fragment must not survive to fire again on the next load.
+        try { window.history.replaceState(null, '', window.location.pathname + window.location.search) } catch { window.location.hash = '' }
+        if (sessionId) openPushTarget(sessionId)
+      } catch { /* best-effort */ }
+    }
+
     const consumePushTarget = () => {
       try {
         if (typeof window.caches === 'undefined') return
@@ -1378,6 +1397,7 @@ window.__ModuleLoader__.load({
       // Notification deep-link: a push click stashed the target session id in
       // the Cache-API flag while this page was closed - open it now, once.
       try { consumePushTarget() } catch { /* ignore */ }
+      try { consumeHashTarget() } catch { /* ignore */ }
       const conn = ctx.get('connection')
       if (conn === undefined) return
       const timer = ctx.get('timer')

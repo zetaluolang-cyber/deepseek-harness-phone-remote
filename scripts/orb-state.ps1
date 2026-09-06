@@ -294,7 +294,7 @@ function Resolve-OrbPoll {
   # $NowMs  - local UTC epoch ms; 0 means "use the clock".
   #
   # Returns a hashtable:
-  #   state, taskTitle, taskSummary, taskCount, detail, cacheStale,
+  #   state, taskTitle, taskSessionId, taskSummary, taskCount, detail, cacheStale,
   #   unauthorized, offline, toastShouldFire, markerMs, markerSeenMs,
   #   fleet (see Get-OrbFleet: counts/total/needing/working/settled/summary)
   param(
@@ -353,6 +353,7 @@ function Resolve-OrbPoll {
   $res = @{
     state            = 'DISCONNECTED'
     taskTitle        = ''
+    taskSessionId    = ''
     taskSummary      = ''
     taskCount        = 0
     detail           = ''
@@ -486,6 +487,7 @@ function Resolve-OrbPoll {
       }
       $res.state = $st
       $res.taskTitle = $title
+      $res.taskSessionId = [string](Get-OrbPropertyValue $best 'sessionId')
       $res.taskSummary = $summary
       $res.detail = $detail
       $res.toastShouldFire = (Test-OrbToastDue -PreviousState $prevState -NewState $st)
