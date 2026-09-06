@@ -20,7 +20,9 @@ export const UNAUTH_TITLE = '(paired)'
 /** Redact ONE task DTO in place of user content (returns a shallow copy). */
 export function redactTaskDTO(dto) {
   if (!dto || typeof dto !== 'object') return dto
-  return Object.assign({}, dto, { title: UNAUTH_TITLE, summary: '' })
+  // firstAsk/lastAsk are the user's verbatim words - if anything they are
+  // MORE sensitive than the generated title, so they are stripped here too.
+  return Object.assign({}, dto, { title: UNAUTH_TITLE, summary: '', firstAsk: '', lastAsk: '' })
 }
 
 /** Redact the `value` of a presence.tasks response ({ tasks, orb }). */

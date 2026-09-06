@@ -32,6 +32,7 @@ import {
   STATE, STATE_PRIORITY, highestPriorityTask, makeTaskDTO, normalizeStaleMs,
 } from './contract.js'
 import { API_ENGINE, API_VERSION } from './api.js'
+import { sessionIdentity } from './identity.js'
 
 function err(code, message) {
   return { ok: false, error: { code, message, details: {} } }
@@ -137,6 +138,66 @@ export function titleFromEvents(events) {
     if (e.type === 'session/title' && e.data && e.data.title) return String(e.data.title)
   }
   return ''
+}
+
+/** Maximum characters kept from a user's own words (identity, not transcript). */
+export const ASK_MAX_CHARS = 80
+
+/**
+ * The user's OWN first and last words in a session, verbatim and truncated.
+ *
+ * A list of settled sessions is unusable without identity: 27 rows of "DONE"
+ * cannot tell the dev session from the daily-report one, and DSH does not
+ * persist its context-compaction summaries (verified against a real 17k-event
+ * log: zero compact/summary events), so there is no free AI summary to reuse.
+ * What IS on disk is what the human typed. It costs nothing, cannot
+ * hallucinate, and the opening line is almost always the session's purpose.
+ *
+ * The LAST line matters as much as the first: "thanks, got it" is a far
+ * stronger end-of-work signal than any elapsed-time threshold.
+ *
+ * Text is collapsed to one line and truncated; the caller decides how much to
+ * render. Returns empty strings when no user text is observable.
+ *
+ * @param {Array<Object>} events - session events ascending.
+ * @returns {{first: string, last: string}}
+ */
+export function userAsks(events) {
+  const texts = []
+  for (const e of Array.isArray(events) ? events : []) {
+    if (!e || e.type !== 'user/message') continue
+    const d = e.data || {}
+    // Only what a HUMAN typed. Every user/message carries source.kind, and
+    // the role is also used for tool/plugin injections: system-prompt
+    // snapshots, sandbox policy, background-job receipts and browser error
+    // relays all arrive as user-role messages. Against real logs the
+    // unfiltered version produced identities like 'Failed to load URL ...'
+    // and 'Background subagent ... finished', i.e. exactly the noise this
+    // field exists to cut through. kind must be 'user'; anything else
+    // (plugin/tool/system/absent) is machine chatter.
+    const kind = String((d.source && d.source.kind) || '')
+    if (kind !== 'user') continue
+    let raw = d.text != null ? d.text : d.content
+    // The wire shape is a content ARRAY of parts; a bare string is also
+    // accepted. Anything else stringifies to '[object Object]', which is
+    // what a naive String() produced here before.
+    if (Array.isArray(raw)) {
+      raw = raw
+        .map((c) => (c && c.type === 'text' && typeof c.text === 'string' ? c.text : ''))
+        .filter(Boolean)
+        .join(' ')
+    }
+    if (typeof raw !== 'string') continue
+    const line = raw.replace(/\s+/g, ' ').trim()
+    if (line) texts.push(line)
+  }
+  if (texts.length === 0) return { first: '', last: '' }
+  const clip = (t) => (t.length > ASK_MAX_CHARS ? t.slice(0, ASK_MAX_CHARS - 1) + '…' : t)
+  const first = clip(texts[0])
+  // A single-message session has no distinct 'last': leave it empty rather
+  // than repeating the same string twice in the UI.
+  const last = texts.length > 1 ? clip(texts[texts.length - 1]) : ''
+  return { first, last }
 }
 
 /**
@@ -257,6 +318,13 @@ export function createPresenceService(ctx, opts = {}) {
     const id = String(record.id || record.sessionId || (record.header && record.header.id) || '')
     if (!id) return null
     const events = await sessionEvents(id)
+    // sessionQuery.listEvents() returns an event INDEX, not content: a
+    // user/message arrives as { sessionId, seq, type, time, surface } with
+    // no `data` at all (verified against a live harness), so identity cannot
+    // come from `events`. It is read from the persisted log instead, cached
+    // per session on (mtime, size) so the ~10s poll costs nothing after the
+    // first read.
+    const asks = sessionIdentity(id)
     let seen = seenBySession.get(id)
     if (!seen) { seen = new Map(); seenBySession.set(id, seen) }
     const hb = foldHeartbeats(events, { now, seen })
@@ -337,6 +405,11 @@ export function createPresenceService(ctx, opts = {}) {
       // turnCycle = user-role message count so push/browser dedupe can key on
       // sessionId:state:turnCycle (repeat events re-notify after a new turn).
       turnCycle: userTurnCount(events),
+      // Session identity for the fleet list: the user's own opening and
+      // closing words. Free (already on disk), verbatim (cannot paraphrase
+      // wrongly), and the opening line is nearly always the purpose.
+      firstAsk: asks.first,
+      lastAsk: asks.last,
     })
     return task
   }

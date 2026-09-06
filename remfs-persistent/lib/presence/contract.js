@@ -160,6 +160,16 @@ export function makeTaskDTO(parts) {
     turnCycle: Number.isFinite(Number(p.turnCycle)) && Number(p.turnCycle) >= 0
       ? Math.floor(Number(p.turnCycle))
       : 0,
+    // firstAsk/lastAsk are ADDED v1 fields: the user's OWN first and last
+    // words in the session, verbatim and truncated. They exist because a
+    // list of settled sessions is unusable without identity - 27 rows of
+    // 'DONE' cannot tell the dev session from the daily-report one. DSH
+    // never persists its context-compaction summaries (verified: zero
+    // compact/summary events in a 17k-event log), so the cheapest true
+    // identity is what the human actually typed: no model call, no tokens,
+    // no paraphrase that could be wrong.
+    firstAsk: String(p.firstAsk || ''),
+    lastAsk: String(p.lastAsk || ''),
     sizeBytes: Number(p.sizeBytes) || 0,
   }
 }
