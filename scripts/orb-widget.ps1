@@ -44,10 +44,9 @@ if (-not (Test-Path -LiteralPath $orbStateModule)) {
 # to the child unchanged (same proven style as ConvertTo-ArgLine in
 # start_harness.template.ps1).
 function ConvertTo-ArgLine {
+  # Thin delegation: the logic and its tests live in orb-state.ps1.
   param([object[]]$Tokens)
-  $out = @()
-  foreach ($t in $Tokens) { $out += ('"' + [string]$t + '"') }
-  return ($out -join ' ')
+  return (ConvertTo-OrbArgLine -Tokens $Tokens)
 }
 
 # ── single-instance guard (FIRST: before any expensive Add-Type) ────────────
@@ -368,47 +367,29 @@ $panel.Add_Paint({
   $pen.Dispose()
 })
 function Update-CompanionPanel {
+  # Only WIRING lives here now. What the panel SAYS - diagnostic outranks
+  # the queue outranks the sampled summary, label clipping, the distribution
+  # meta line - is decided by Get-OrbPanelText in orb-state.ps1, where it is
+  # unit-tested. It used to be ~30 lines of branching inside this function,
+  # reachable only by constructing a WinForms panel, i.e. never tested.
   $stateText = $P_TEXT[$current.state]
   if (-not $stateText) { $stateText = 'Unavailable' }
   $glyph = $P_GLYPH[$current.state]
   if (-not $glyph) { $glyph = '?' }
   $panelStatus.Text = ($glyph + '  ' + $stateText)
   $panelStatus.ForeColor = $P_COLOR[$current.state]
-  $panelTitle.Text = if ($current.title) { $current.title } elseif ($current.state -eq $P_IDLE) { '暂无活动任务' } else { $stateText }
-  # Body: when several tasks want you, the useful answer is the QUEUE, not a
-  # re-statement of the one task the orb happened to sample. Diagnostics
-  # (stale cache, unauthorized, offline) still win - they explain why the
-  # numbers below cannot be trusted.
-  $f = $current.fleet
-  $needing = @()
-  if ($null -ne $f) { $needing = @($f.needing) }
-  if ($current.detail) { $panelSummary.Text = $current.detail }
-  elseif ($needing.Count -gt 1) {
-    $lines = @()
-    $shown = [Math]::Min(3, $needing.Count)
-    for ($qi = 0; $qi -lt $shown; $qi++) {
-      $item = $needing[$qi]
-      $mark = $P_GLYPH[[string]$item.state]
-      if (-not $mark) { $mark = '?' }
-      # Identity first: the user's own opening words beat a title that is
-      # often absent or a redaction placeholder.
-      $label = [string]$item.firstAsk
-      if (-not $label) { $label = [string]$item.title }
-      if (-not $label) { $label = [string]$item.sessionId }
-      if ($label.Length -gt 34) { $label = $label.Substring(0, 33) + [char]0x2026 }
-      $lines += ($mark + ' ' + $label)
-    }
-    if ($needing.Count -gt $shown) { $lines += ('… 还有 ' + ($needing.Count - $shown) + ' 个等待处理') }
-    $panelSummary.Text = ($lines -join [Environment]::NewLine)
+  $text = Get-OrbPanelText -Current $current
+  # The pure composer is ASCII (this file has a BOM, orb-state.ps1 does not),
+  # so the localized IDLE wording stays here where non-ASCII is safe.
+  if ($current.title) { $panelTitle.Text = $current.title }
+  elseif ($current.state -eq $P_IDLE) { $panelTitle.Text = '暂无活动任务' }
+  else { $panelTitle.Text = $stateText }
+  if (-not $current.detail -and -not $current.summary -and $current.state -eq $P_IDLE -and $text.body -notmatch [char]0x000A) {
+    $panelSummary.Text = 'Harness 已连接，目前没有需要处理的任务。'
+  } else {
+    $panelSummary.Text = $text.body
   }
-  elseif ($current.summary) { $panelSummary.Text = $current.summary }
-  elseif ($current.state -eq $P_IDLE) { $panelSummary.Text = 'Harness 已连接，目前没有需要处理的任务。' }
-  else { $panelSummary.Text = '等待 Harness 返回任务详情。' }
-  # Meta line: the distribution, so a glance answers 'how many need me / are
-  # working / are settled' instead of just a total.
-  $metaLeft = '任务 ' + $current.count
-  if ($null -ne $f -and $f.summary) { $metaLeft = [string]$f.summary }
-  $panelMeta.Text = ($metaLeft + $(if ($current.updated) { '  ·  更新 ' + $current.updated } else { '' }))
+  $panelMeta.Text = $text.meta
   $panel.Invalidate()
 }
 
@@ -748,19 +729,12 @@ $panelItem.Add_Click({ Toggle-CompanionPanel })
 # $HarnessUrl parameter, so a custom deployment can still point elsewhere.
 $openItem = New-Object System.Windows.Forms.ToolStripMenuItem('打开 Harness')
 function Get-OpenUrl {
-  # The orb already knows WHICH session wants you; opening the bare GUI threw
-  # that away and left the user to find it among 27 sessions. The GUI has no
-  # session URL routing, so the client module consumes a URL FRAGMENT
-  # (#remfs-session=<id>) exactly like it consumes the Service Worker's
-  # cache flag for a tapped notification, then strips it. A fragment is
-  # never sent to the server, so this adds no route and puts no session id
-  # into any log.
+  # Thin delegation: URL construction and its tests live in orb-state.ps1.
+  # This wrapper only supplies the two globals the pure function refuses to
+  # read for itself.
   $sid = ''
   if ($null -ne $current -and $current.ContainsKey('sessionId')) { $sid = [string]$current.sessionId }
-  if (-not $sid) { return $HarnessUrl }
-  $base = $HarnessUrl
-  if ($base.Contains('#')) { $base = $base.Substring(0, $base.IndexOf('#')) }
-  return ($base + '#remfs-session=' + [uri]::EscapeDataString($sid))
+  return (Get-OrbOpenUrl -BaseUrl $HarnessUrl -SessionId $sid)
 }
 
 $openItem.Add_Click({ try { Start-Process (Get-OpenUrl) } catch { } })

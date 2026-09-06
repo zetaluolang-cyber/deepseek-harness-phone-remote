@@ -265,5 +265,102 @@ if ($none.taskSessionId -ne '') { Fail "an empty task list must not carry a sess
 $un = Resolve-OrbPoll -Poll @{ kind = 'unauthorized'; code = 401 } -Previous @{ state = 'RUNNING' } -Config $cfg -NowMs 5000000
 if ($un.taskSessionId -ne '') { Fail "an unauthorized poll must not carry a session id" }
 Write-Host "orb-state: OK (deep-link session id, blank when there is nothing to point at)"
+# --- extracted pure helpers -------------------------------------------------
+# These shipped inside orb-widget.ps1, where a test could only reach them by
+# loading WinForms. Get-OrbOpenUrl in particular went live untested.
+if ((ConvertTo-OrbArgLine -Tokens @('a')) -ne '"a"') { Fail "single token must be quoted" }
+if ((ConvertTo-OrbArgLine -Tokens @('C:\Program Files\x.ps1','-Quiet')) -ne '"C:\Program Files\x.ps1" "-Quiet"') {
+    Fail "a spaced path must stay ONE argv token: $(ConvertTo-OrbArgLine -Tokens @('C:\Program Files\x.ps1','-Quiet'))"
+}
+if ((ConvertTo-OrbArgLine -Tokens @()) -ne '') { Fail "no tokens must yield an empty line" }
+Write-Host "orb-state: OK (arg quoting keeps spaced paths intact)"
+
+$U = 'http://127.0.0.1:3080/'
+if ((Get-OrbOpenUrl -BaseUrl $U -SessionId 'session-abc') -ne ($U + '#remfs-session=session-abc')) {
+    Fail "a session id must become a fragment"
+}
+if ((Get-OrbOpenUrl -BaseUrl $U -SessionId '') -ne $U) { Fail "no session id must open the bare GUI" }
+# a fragment is REPLACED, never appended: two fragments in one URL is not a thing
+if ((Get-OrbOpenUrl -BaseUrl ($U + '#stale') -SessionId 's1') -ne ($U + '#remfs-session=s1')) {
+    Fail "a pre-existing fragment must be replaced, got $(Get-OrbOpenUrl -BaseUrl ($U + '#stale') -SessionId 's1')"
+}
+# anything that could break a URL must be percent-encoded
+$esc = Get-OrbOpenUrl -BaseUrl $U -SessionId 'a b/c#d'
+if ($esc -notmatch 'remfs-session=a%20b%2Fc%23d') { Fail "session id must be escaped, got $esc" }
+if (([regex]::Matches($esc, '#')).Count -ne 1) { Fail "an escaped id must not introduce a second fragment: $esc" }
+if ((Get-OrbOpenUrl -BaseUrl '' -SessionId 's1') -ne '') { Fail "no base url must yield nothing to open" }
+Write-Host "orb-state: OK (deep-link URL: fragment replace, escaping, empty inputs)"
+
+# --- panel text composition -------------------------------------------------
+# The wording rules used to live inside Update-CompanionPanel, reachable only
+# by constructing a WinForms panel - so every rule below was unverified.
+function New-Cur { param($state, $title, $summary, $detail, $count, $fleet, $updated)
+    return @{ state = $state; title = $title; summary = $summary; detail = $detail
+              count = $count; fleet = $fleet; updated = $updated }
+}
+function New-Need($state, $ask, $sid) { return @{ state = $state; firstAsk = $ask; title = ''; sessionId = $sid } }
+
+# a diagnostic always wins: it explains why the numbers cannot be trusted
+$d = Get-OrbPanelText -Current (New-Cur -state 'DISCONNECTED' -title '' -summary 'some summary' -detail 'cache stale - dispatcher stalled' -count 27 -fleet @{ needing = @((New-Need 'NEEDS_USER' 'a' 's1'), (New-Need 'FAILED' 'b' 's2')); summary = '2 need you' } -updated '10:00')
+if ($d.body -ne 'cache stale - dispatcher stalled') { Fail "a diagnostic must outrank the queue, got '$($d.body)'" }
+
+# more than one waiting -> the QUEUE, identity first, newest cap honoured
+$q = Get-OrbPanelText -Current (New-Cur -state 'NEEDS_USER' 'T' 'sampled summary' '' 9 `
+    @{ needing = @((New-Need 'NEEDS_USER' 'approve the delete' 's1'),
+                   (New-Need 'NEEDS_USER' 'pick a name' 's2'),
+                   (New-Need 'FAILED' 'build broke' 's3'),
+                   (New-Need 'FAILED' 'tests broke' 's4'));
+       summary = '4 need you' } '10:00') -MaxRows 3
+$rows = $q.body -split [Environment]::NewLine
+if ($rows.Count -ne 4) { Fail "3 rows + an overflow line expected, got $($rows.Count)" }
+if ($rows[0] -notmatch 'approve the delete') { Fail "the queue must lead with the most urgent: $($rows[0])" }
+if ($rows[3] -notmatch '\+1 more waiting') { Fail "overflow must be counted, got '$($rows[3])'" }
+if ($q.body -match 'sampled summary') { Fail "the sampled summary must not replace the queue" }
+
+# exactly one waiting -> the detailed summary is more useful than a 1-row list
+$one = Get-OrbPanelText -Current (New-Cur -state 'NEEDS_USER' -title 'T' -summary 'sampled summary' -detail '' -count 3 -fleet @{ needing = @((New-Need 'NEEDS_USER' 'only one' 's1')); summary = '1 need you' } -updated '10:00')
+if ($one.body -ne 'sampled summary') { Fail "a single waiting task should keep the summary, got '$($one.body)'" }
+
+# long identity is clipped with an ellipsis, never wrapped
+$long = Get-OrbPanelText -Current (New-Cur -state 'NEEDS_USER' -title '' -summary '' -detail '' -count 2 -fleet @{ needing = @((New-Need 'NEEDS_USER' ('x' * 200) 's1'), (New-Need 'FAILED' 'y' 's2')); summary = '2 need you' } -updated '') -LabelChars 20
+$first = ($long.body -split [Environment]::NewLine)[0]
+if ($first.Length -gt 22) { Fail "a long label must be clipped, got length $($first.Length)" }
+if ($first -notmatch ([char]0x2026)) { Fail "clipping must be visible" }
+
+# meta prefers the distribution over a bare total
+$m = Get-OrbPanelText -Current (New-Cur -state 'RUNNING' -title 'T' -summary 's' -detail '' -count 27 -fleet @{ needing = @(); summary = '2 need you | 5 running' } -updated '10:15')
+if ($m.meta -notmatch '2 need you \| 5 running') { Fail "meta must carry the distribution, got '$($m.meta)'" }
+if ($m.meta -notmatch '10:15') { Fail "meta must carry the update time" }
+# no fleet (stale/unauthorized poll) -> fall back to the count, never invent one
+$nf = Get-OrbPanelText -Current (New-Cur -state 'DISCONNECTED' -title '' -summary '' -detail 'offline' -count 27 -fleet $null -updated '10:15')
+if ($nf.meta -notmatch 'tasks 27') { Fail "without a fleet the meta must fall back to the count, got '$($nf.meta)'" }
+
+# idle and empty inputs never produce a blank panel
+$idle = Get-OrbPanelText -Current (New-Cur -state 'IDLE' -title '' -summary '' -detail '' -count 0 -fleet $null -updated '')
+if (-not $idle.title -or -not $idle.body) { Fail "IDLE must still say something" }
+$null_ = Get-OrbPanelText -Current $null
+if ($null_.title -ne '' -or $null_.body -ne '') { Fail "a null record must degrade to empty, not throw" }
+Write-Host "orb-state: OK (panel text: diagnostic > queue > summary, clipping, meta fallback)"
+
+# --- Get-OrbPropertyValue ---------------------------------------------------
+# Every decision in this module reads its inputs through this one accessor, so
+# a wrong answer here is wrong EVERYWHERE. It had a real bug: a hashtable also
+# exposes its own collection members through PSObject.Properties, so asking a
+# @{ count = 27 } for 'count' returned 4 - the number of KEYS. Dictionaries are
+# now resolved before PSObject members.
+$ht = @{ state = 'X'; count = 27; keys = 'mine'; length = 'also mine' }
+if ((Get-OrbPropertyValue $ht 'count') -ne 27) { Fail "hashtable data must beat the container's Count: got $(Get-OrbPropertyValue $ht 'count')" }
+if ((Get-OrbPropertyValue $ht 'keys') -ne 'mine') { Fail "a 'keys' KEY must beat the container's Keys" }
+if ((Get-OrbPropertyValue $ht 'length') -ne 'also mine') { Fail "a 'length' KEY must beat the container's Length" }
+if ((Get-OrbPropertyValue $ht 'COUNT') -ne 27) { Fail "hashtable lookup must be case-insensitive" }
+if ($null -ne (Get-OrbPropertyValue $ht 'absent')) { Fail "a missing key must be null, not a container member" }
+$pso = [pscustomobject]@{ count = 9 }
+if ((Get-OrbPropertyValue $pso 'count') -ne 9) { Fail "pscustomobject must still work" }
+$json = '{"count":5,"tasks":[1,2,3]}' | ConvertFrom-Json
+if ((Get-OrbPropertyValue $json 'count') -ne 5) { Fail "ConvertFrom-Json objects must still work" }
+if ((Get-OrbPropertyValue $json 'tasks').Count -ne 3) { Fail "array values must come back intact" }
+if ($null -ne (Get-OrbPropertyValue $null 'x')) { Fail "a null object must yield null" }
+Write-Host "orb-state: OK (property lookup: data beats container members, both shapes)"
+
 Write-Host "orb-state: ALL PASS"
 exit 0
