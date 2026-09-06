@@ -42,6 +42,17 @@ $script:OrbStatePriority = @{
 # Server-side redaction placeholder for unauthenticated callers
 # (remfs-persistent/lib/presence/redact.js).
 $script:OrbRedactedTitle = '(paired)'
+# Display vocabulary for the pure panel composer. ASCII-safe on purpose:
+# this file has no BOM and PS 5.1 would mis-decode non-ASCII literals here.
+$script:OrbStateText = @{
+  'NEEDS_USER' = 'Needs you'; 'FAILED' = 'Failed'; 'STALE' = 'Possibly stalled'
+  'RUNNING' = 'Running'; 'DONE' = 'Done'; 'IDLE' = 'Idle'
+  'DISCONNECTED' = 'Disconnected'; 'UNAUTHORIZED' = 'Unauthorized'; 'OFFLINE' = 'Offline'
+}
+$script:OrbStateGlyph = @{
+  'NEEDS_USER' = '!'; 'FAILED' = 'x'; 'STALE' = '~'; 'RUNNING' = '>'
+  'DONE' = 'v'; 'IDLE' = 'o'; 'DISCONNECTED' = '?'; 'UNAUTHORIZED' = '!'; 'OFFLINE' = '?'
+}
 # .NET ticks (100ns) between 0001-01-01 and 1970-01-01, expressed in ms.
 $script:OrbEpochOffsetMs = 62135596800000
 
@@ -82,17 +93,27 @@ function ConvertTo-OrbMs {
 function Get-OrbPropertyValue {
   param([object]$Obj, [string]$Name)
   if ($null -eq $Obj) { return $null }
+  # A DICTIONARY IS CHECKED FIRST, and this order is the whole point: a
+  # hashtable also exposes its OWN collection members through
+  # PSObject.Properties, so asking for 'count' returned the number of KEYS
+  # (4) instead of the value stored under 'count' (27). Same class of trap as
+  # Sort-Object resolving a literal property name on a hashtable: the
+  # container's members shadow the data's.
+  try {
+    if ($Obj -is [System.Collections.IDictionary]) {
+      if ($Obj.Contains($Name)) { return $Obj[$Name] }
+      # case-insensitive fallback: a plain @{} is case-insensitive already,
+      # but an ordered/typed dictionary may not be.
+      foreach ($k in $Obj.Keys) {
+        if ([string]$k -ieq $Name) { return $Obj[$k] }
+      }
+      return $null
+    }
+  } catch { }
   # PSCustomObject (ConvertFrom-Json) and pscustomobject literals expose
   # properties; case-insensitive lookup is built into the PS adapter.
   $p = $Obj.PSObject.Properties[$Name]
   if ($null -ne $p) { return $p.Value }
-  # Hashtable fallback (Poll/Previous/Config are passed as hashtables by the
-  # widget; ordinary hashtables do not surface keys through PSObject.Properties).
-  try {
-    if ($Obj -is [System.Collections.IDictionary] -and $Obj.ContainsKey($Name)) {
-      return $Obj[$Name]
-    }
-  } catch { }
   return $null
 }
 
@@ -257,6 +278,105 @@ function Get-OrbFleet {
   if ($res.working -gt 0) { $parts += ("{0} running" -f $res.working) }
   if ($res.settled -gt 0) { $parts += ("{0} settled" -f $res.settled) }
   $res.summary = ($parts -join ' | ')
+  return $res
+}
+
+function ConvertTo-OrbArgLine {
+  # Windows PowerShell 5.1 joins an ArgumentList ARRAY into a raw command
+  # line with NO quoting, so a path containing spaces arrives as several
+  # argv tokens. Wrapping every token in exactly one pair of double quotes
+  # and joining is what 5.1 hands to the child unchanged.
+  #
+  # Pure and parameterised so it can be tested: it used to live inside the
+  # widget where a test could only reach it by loading WinForms.
+  param([object[]]$Tokens)
+  $out = @()
+  foreach ($t in $Tokens) { $out += ('"' + [string]$t + '"') }
+  return ($out -join ' ')
+}
+
+function Get-OrbOpenUrl {
+  # Deep link for the session the orb is currently showing. The GUI has no
+  # session URL routing, so the client module consumes a URL FRAGMENT
+  # (#remfs-session=<id>) exactly like it consumes the Service Worker's
+  # cache flag for a tapped notification, then strips it. A fragment never
+  # reaches the server: no route, no session id in any log.
+  #
+  # Takes the base URL and session id as ARGUMENTS. The widget's version read
+  # two globals ($HarnessUrl, $current), which is exactly why it shipped
+  # untested - a test could not construct its inputs.
+  param([string]$BaseUrl, [string]$SessionId)
+  $base = [string]$BaseUrl
+  if (-not $base) { return '' }
+  # A pre-existing fragment is REPLACED, never appended to: two fragments in
+  # one URL is not a thing, and the second would be ignored.
+  if ($base.Contains('#')) { $base = $base.Substring(0, $base.IndexOf('#')) }
+  $sid = [string]$SessionId
+  if (-not $sid) { return $base }
+  return ($base + '#remfs-session=' + [uri]::EscapeDataString($sid))
+}
+
+function Get-OrbPanelText {
+  # Decide WHAT the companion panel says. Pure: takes the current display
+  # record and returns { title; body; meta }, so the wording rules are
+  # testable without constructing a WinForms panel.
+  #
+  # Body precedence, most specific first:
+  #   1. a diagnostic (stale cache / unauthorized / offline) - it explains
+  #      why anything below it cannot be trusted, so it always wins;
+  #   2. the QUEUE when more than one task wants you - a re-statement of the
+  #      single sampled task is useless when five are waiting;
+  #   3. the sampled task's summary;
+  #   4. a state-appropriate fallback.
+  param([object]$Current, [int]$MaxRows = 3, [int]$LabelChars = 34)
+  $res = @{ title = ''; body = ''; meta = '' }
+  if ($null -eq $Current) { return $res }
+  $state = [string](Get-OrbPropertyValue $Current 'state')
+  $stateText = $script:OrbStateText[$state]
+  if (-not $stateText) { $stateText = 'Unavailable' }
+  $title = [string](Get-OrbPropertyValue $Current 'title')
+  if ($title) { $res.title = $title }
+  elseif ($state -eq 'IDLE') { $res.title = 'No active task' }
+  else { $res.title = $stateText }
+
+  $fleet = Get-OrbPropertyValue $Current 'fleet'
+  $needing = @()
+  if ($null -ne $fleet) { $needing = @(Get-OrbPropertyValue $fleet 'needing') }
+  $detail = [string](Get-OrbPropertyValue $Current 'detail')
+  $summary = [string](Get-OrbPropertyValue $Current 'summary')
+  if ($detail) {
+    $res.body = $detail
+  } elseif ($needing.Count -gt 1) {
+    $rows = @()
+    $shown = [Math]::Min($MaxRows, $needing.Count)
+    for ($i = 0; $i -lt $shown; $i++) {
+      $item = $needing[$i]
+      $mark = $script:OrbStateGlyph[[string](Get-OrbPropertyValue $item 'state')]
+      if (-not $mark) { $mark = '?' }
+      $label = Get-OrbTaskLabel $item
+      if ($label.Length -gt $LabelChars) { $label = $label.Substring(0, $LabelChars - 1) + [char]0x2026 }
+      $rows += ($mark + ' ' + $label)
+    }
+    if ($needing.Count -gt $shown) { $rows += ([char]0x2026 + ' +' + ($needing.Count - $shown) + ' more waiting') }
+    $res.body = ($rows -join [Environment]::NewLine)
+  } elseif ($summary) {
+    $res.body = $summary
+  } elseif ($state -eq 'IDLE') {
+    $res.body = 'Harness connected; nothing needs you right now.'
+  } else {
+    $res.body = 'Waiting for task detail from the harness.'
+  }
+
+  # Meta: the distribution answers 'how many need me' at a glance; a bare
+  # total does not. Falls back to the count when there is no live fleet.
+  $meta = 'tasks ' + [string](Get-OrbPropertyValue $Current 'count')
+  if ($null -ne $fleet) {
+    $fs = [string](Get-OrbPropertyValue $fleet 'summary')
+    if ($fs) { $meta = $fs }
+  }
+  $updated = [string](Get-OrbPropertyValue $Current 'updated')
+  if ($updated) { $meta = $meta + '  -  ' + $updated }
+  $res.meta = $meta
   return $res
 }
 
