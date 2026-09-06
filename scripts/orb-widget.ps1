@@ -285,7 +285,7 @@ if (-not $restored) {
 # `fleet` is the SHAPE of every task (see Get-OrbFleet), not the single
 # sampled one: with 27 sessions the old display collapsed the whole set
 # into one glyph, which is the wrong unit for supervising a fleet.
-$current = @{ state = $P_DISC; title = ''; summary = ''; detail = ''; count = 0; updated = ''; alert = $false; fleet = $null }
+$current = @{ state = $P_DISC; title = ''; summary = ''; detail = ''; count = 0; updated = ''; alert = $false; fleet = $null; sessionId = '' }
 $fx = @{ time = 0.0; particles = @(); staticPainted = $false; hover = $false }
 
 # ── quick panel ─────────────────────────────────────────────────────────────
@@ -352,7 +352,7 @@ function New-CompanionButton([string]$text, [int]$x, [int]$width) {
 
 $panelOpen = New-CompanionButton '打开 Harness' 16 112
 $panelOpen.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(74, 108, 247)
-$panelOpen.Add_Click({ try { Start-Process $HarnessUrl; $panel.Hide() } catch { } })
+$panelOpen.Add_Click({ try { Start-Process (Get-OpenUrl); $panel.Hide() } catch { } })
 $panelRefresh = New-CompanionButton '立即刷新' 136 82
 $panelRefresh.Add_Click({ PollOnce })
 $panelLog = New-CompanionButton '查看日志' 226 86
@@ -744,7 +744,23 @@ $panelItem.Add_Click({ Toggle-CompanionPanel })
 # serve mapping) and is deliberately never used here. Both actions use the
 # $HarnessUrl parameter, so a custom deployment can still point elsewhere.
 $openItem = New-Object System.Windows.Forms.ToolStripMenuItem('打开 Harness')
-$openItem.Add_Click({ try { Start-Process $HarnessUrl } catch { } })
+function Get-OpenUrl {
+  # The orb already knows WHICH session wants you; opening the bare GUI threw
+  # that away and left the user to find it among 27 sessions. The GUI has no
+  # session URL routing, so the client module consumes a URL FRAGMENT
+  # (#remfs-session=<id>) exactly like it consumes the Service Worker's
+  # cache flag for a tapped notification, then strips it. A fragment is
+  # never sent to the server, so this adds no route and puts no session id
+  # into any log.
+  $sid = ''
+  if ($null -ne $current -and $current.ContainsKey('sessionId')) { $sid = [string]$current.sessionId }
+  if (-not $sid) { return $HarnessUrl }
+  $base = $HarnessUrl
+  if ($base.Contains('#')) { $base = $base.Substring(0, $base.IndexOf('#')) }
+  return ($base + '#remfs-session=' + [uri]::EscapeDataString($sid))
+}
+
+$openItem.Add_Click({ try { Start-Process (Get-OpenUrl) } catch { } })
 $refreshItem = New-Object System.Windows.Forms.ToolStripMenuItem('立即刷新')
 $refreshItem.Add_Click({ PollOnce | Out-Null })
 $logItem = New-Object System.Windows.Forms.ToolStripMenuItem('查看悬浮球日志')
@@ -808,7 +824,11 @@ function Invoke-OrbDecision {
   # cannot vouch for.
   $fleet = $null
   if (-not $d.cacheStale -and -not $d.unauthorized -and -not $d.offline) { $fleet = $d.fleet }
-  Set-State ([string]$d.state) $title $summary $detail $count $fleet
+  # Only deep-link to a session the CURRENT snapshot vouches for: a stale or
+  # unauthorized poll must not send the user to a session that may be gone.
+  $sid = ''
+  if (-not $d.cacheStale -and -not $d.unauthorized -and -not $d.offline) { $sid = [string]$d.taskSessionId }
+  Set-State ([string]$d.state) $title $summary $detail $count $fleet $sid
 
   # Toast gating lives in the pure decision: no toast while unauthorized,
   # offline or cache-stale; a fresh transition into NEEDS_USER/FAILED toasts.
@@ -854,7 +874,7 @@ function Show-StateToast([string]$st, [string]$title) {
 }
 
 function Set-State {
-  param([string]$st, [string]$title, [string]$summary = '', [string]$detail = '', [int]$count = 0, [object]$fleet = $null)
+  param([string]$st, [string]$title, [string]$summary = '', [string]$detail = '', [int]$count = 0, [object]$fleet = $null, [string]$sessionId = '')
   if ($null -eq $P_PRIORITY[$st]) {
     $detail = if ($detail) { $detail } else { 'Presence 返回未知状态 · ' + $st }
     $st = $P_DISC
@@ -870,6 +890,7 @@ function Set-State {
   $current.detail = $detail
   $current.count = $count
   $current.fleet = $fleet
+  $current.sessionId = $sessionId
   $current.updated = Get-Date -Format 'HH:mm:ss'
   # Emphasise exactly the states a human has to act on.
   $current.alert = ($st -eq $P_NEEDS -or $st -eq $P_FAILED)

@@ -244,5 +244,26 @@ if ($decision.taskCount -ne 8) { Fail "taskCount must stay the full count, got $
 if (@($decision.fleet.needing).Count -ne 3) { Fail "the decision must carry the whole actionable list, not one sample" }
 if ($decision.fleet.total -ne 8) { Fail "the decision must carry the whole fleet" }
 Write-Host "orb-state: OK (fleet distribution, triage order, calm fleet, degradation)"
+
+# --- deep link: the decision must name the session the orb is showing -------
+$deepBody = [pscustomobject]@{ ok = $true; value = [pscustomobject]@{ tasks = @(
+    (New-Task 'RUNNING' 'other' 'sess-other' 100),
+    (New-Task 'NEEDS_USER' 'approve the delete' 'session-abc-123' 900)
+) } }
+$deep = Resolve-OrbPoll -Poll @{ kind = 'ok'; body = $deepBody; authenticated = $true } `
+    -Previous @{ state = 'IDLE' } -Config $cfg -NowMs 5000000
+if ($deep.taskSessionId -ne 'session-abc-123') {
+    Fail "the decision must carry the SAMPLED task's sessionId, got '$($deep.taskSessionId)'"
+}
+if ($deep.state -ne 'NEEDS_USER') { Fail "sanity: the sampled task should be the NEEDS_USER one" }
+# an empty fleet leaves it blank rather than stale
+$noneBody = [pscustomobject]@{ ok = $true; value = [pscustomobject]@{ tasks = @() } }
+$none = Resolve-OrbPoll -Poll @{ kind = 'ok'; body = $noneBody; authenticated = $true } `
+    -Previous @{ state = 'RUNNING' } -Config $cfg -NowMs 5000000
+if ($none.taskSessionId -ne '') { Fail "an empty task list must not carry a session id" }
+# unauthorized/offline decisions must never name a session either
+$un = Resolve-OrbPoll -Poll @{ kind = 'unauthorized'; code = 401 } -Previous @{ state = 'RUNNING' } -Config $cfg -NowMs 5000000
+if ($un.taskSessionId -ne '') { Fail "an unauthorized poll must not carry a session id" }
+Write-Host "orb-state: OK (deep-link session id, blank when there is nothing to point at)"
 Write-Host "orb-state: ALL PASS"
 exit 0
